@@ -48,7 +48,7 @@ Add to your MCP config:
 }
 ```
 
-## Tools (17)
+## Tools (18)
 
 ### IPC & Process Architecture
 
@@ -84,6 +84,11 @@ Add to your MCP config:
 ### Reference
 
 - `electron_explain_concept` — Authoritative explanations of Electron concepts (process model, context isolation, sandbox, IPC, ASAR, fuses, code signing, build tools)
+- `electron_knowledge_version` — Return the vintage of the embedded Electron knowledge (last-verified date, Electron stable at verification, supported version range)
+
+## Knowledge freshness
+
+Tools that rely on embedded knowledge (breaking changes, deprecated APIs, security recommendations, anti-patterns) append a footer showing when that data was last verified against official Electron docs. Call `electron_knowledge_version` to get the metadata directly. See [KNOWLEDGE.md](./KNOWLEDGE.md) for the update process when Electron ships a new major.
 
 ## Examples
 

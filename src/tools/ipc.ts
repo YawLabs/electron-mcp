@@ -356,8 +356,10 @@ declare global {
       if (input.preloadCode) {
         const code = input.preloadCode;
 
-        // Check for raw ipcRenderer exposure
-        if (/contextBridge\.exposeInMainWorld\s*\([^,]+,\s*\{[^}]*ipcRenderer/s.test(code)) {
+        // Check for raw ipcRenderer exposure.
+        // Matches `ipcRenderer` as a bare value (shorthand `{ ipcRenderer }` or `{ x: ipcRenderer }`),
+        // but not as a call target like `ipcRenderer.invoke(...)` inside a wrapping function.
+        if (/contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer\s*[,}]/.test(code)) {
           findings.push({
             severity: "CRITICAL",
             issue: "Raw ipcRenderer exposed through contextBridge",

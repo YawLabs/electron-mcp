@@ -2,8 +2,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { knowledgeFooter } from "./knowledge.js";
 import { buildTools } from "./tools/build.js";
 import { ipcTools } from "./tools/ipc.js";
+import { knowledgeTools } from "./tools/knowledge.js";
 import { migrationTools } from "./tools/migration.js";
 import { performanceTools } from "./tools/performance.js";
 import { referenceTools } from "./tools/reference.js";
@@ -34,7 +36,11 @@ const allTools = [
   ...migrationTools,
   ...performanceTools,
   ...referenceTools,
+  ...knowledgeTools,
 ];
+
+// The knowledge-version tool IS the metadata — don't self-annotate it.
+const FOOTER_EXEMPT = new Set(["electron_knowledge_version"]);
 
 const server = new McpServer({
   name: "@yawlabs/electron-mcp",
@@ -51,7 +57,8 @@ for (const tool of allTools) {
     async (input: Record<string, unknown>) => {
       try {
         const result = await (tool.handler as (input: unknown) => Promise<unknown>)(input);
-        const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+        const raw = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+        const text = FOOTER_EXEMPT.has(tool.name) ? raw : raw + knowledgeFooter();
         return {
           content: [{ type: "text" as const, text }],
         };
