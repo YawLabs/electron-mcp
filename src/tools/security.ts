@@ -1,4 +1,11 @@
 import { z } from "zod";
+import { KNOWLEDGE_VERSION } from "../knowledge.js";
+
+// Electron's support policy: current stable + previous two majors receive
+// security patches. Derive the supported floor from the embedded knowledge
+// vintage so advice stays accurate after a knowledge bump.
+const SUPPORTED_MIN = KNOWLEDGE_VERSION.electronStable - 2;
+const SUPPORTED_MAX = KNOWLEDGE_VERSION.electronStable;
 
 export const securityTools = [
   {
@@ -35,7 +42,9 @@ export const securityTools = [
       const preload = input.preloadCode || "";
       const html = input.htmlContent || "";
 
-      let ver = 41;
+      // Default assumes latest supported stable; overridden by explicit input
+      // or extracted from package.json.
+      let ver: number = KNOWLEDGE_VERSION.electronStable;
       if (input.electronVersion) {
         ver = Number.parseInt(input.electronVersion, 10);
       } else if (pkgJson) {
@@ -113,14 +122,21 @@ export const securityTools = [
         const hasCSP = /content-security-policy/i.test(html) || /Content-Security-Policy/.test(html);
         const hasUnsafeInline = /unsafe-inline/.test(html);
         const hasUnsafeEval = /unsafe-eval/.test(html);
+        // Collect every unsafe directive present so the status reflects ALL
+        // weaknesses, not just unsafe-eval. Previously unsafe-inline only
+        // surfaced inside the unsafe-eval branch's message string, so a CSP
+        // with unsafe-inline alone incorrectly reported PASS.
+        const unsafeDirectives: string[] = [];
+        if (hasUnsafeEval) unsafeDirectives.push("'unsafe-eval'");
+        if (hasUnsafeInline) unsafeDirectives.push("'unsafe-inline'");
         checks.push({
           id: 6,
           name: "Define a Content Security Policy",
-          status: !hasCSP ? "FAIL" : hasUnsafeEval ? "WARN" : "PASS",
+          status: !hasCSP ? "FAIL" : unsafeDirectives.length > 0 ? "WARN" : "PASS",
           detail: !hasCSP
             ? "No Content-Security-Policy found in HTML. Add a CSP meta tag or use session.webRequest to set CSP headers."
-            : hasUnsafeEval
-              ? `CSP defined but contains 'unsafe-eval'${hasUnsafeInline ? " and 'unsafe-inline'" : ""}. Tighten your CSP to remove these directives.`
+            : unsafeDirectives.length > 0
+              ? `CSP defined but contains ${unsafeDirectives.join(" and ")}. Tighten your CSP to remove ${unsafeDirectives.length > 1 ? "these directives" : "this directive"}.`
               : "CSP is defined.",
         });
       }
@@ -166,7 +182,16 @@ export const securityTools = [
 
       // 10. Preload security
       if (preload) {
-        const rawExpose = /contextBridge\.exposeInMainWorld\s*\([^,]+,\s*\{[^}]*ipcRenderer/s.test(preload);
+        // Match ipcRenderer as a bare value (`{ ipcRenderer }`, `{ x: ipcRenderer }`)
+        // or as a bare method reference (`{ send: ipcRenderer.send }`). The `[^}]*`
+        // form of the previous regex broke on nested braces — this bounded pattern
+        // relies on a terminator character instead. Mirrors the regex in
+        // electron_audit_ipc_security so both tools agree on what counts as raw
+        // exposure.
+        const rawExpose =
+          /contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer(?:\.(?:send|invoke|on|once|sendSync|postMessage|sendTo|sendToHost|removeListener|removeAllListeners))?\s*(?:[,}]|$)/.test(
+            preload,
+          );
         const directAssign = /(?:window|globalThis)\.\w+\s*=/.test(preload);
         const hasRemote = /require\s*\(\s*['"]@electron\/remote['"]\s*\)/.test(preload);
 
@@ -198,21 +223,23 @@ export const securityTools = [
         }
       }
 
-      // 13. Electron version check
+      // 13. Electron version check — Electron supports the current stable +
+      // previous two majors. Derive the window from the embedded knowledge
+      // vintage instead of hardcoding so this stays accurate after a bump.
       if (pkgJson) {
-        if (ver < 39) {
+        if (ver < SUPPORTED_MIN) {
           checks.push({
             id: 13,
             name: "Use a supported Electron version",
             status: "WARN",
-            detail: `Electron ${ver} is detected. Only the latest 3 major versions are supported with security patches (currently v39-v41). Upgrade to receive security fixes.`,
+            detail: `Electron ${ver} is detected. Only the latest 3 major versions are supported with security patches (currently v${SUPPORTED_MIN}-v${SUPPORTED_MAX}). Upgrade to receive security fixes.`,
           });
         } else {
           checks.push({
             id: 13,
             name: "Use a supported Electron version",
             status: "PASS",
-            detail: `Electron ${ver} is within the supported range.`,
+            detail: `Electron ${ver} is within the supported range (v${SUPPORTED_MIN}-v${SUPPORTED_MAX}).`,
           });
         }
       }

@@ -97,6 +97,27 @@ describe("electron_scaffold_ipc_channel", () => {
     assert.ok(result.includes("ipcRenderer.on"));
     assert.ok(result.includes("removeListener"), "main-to-renderer must provide cleanup");
   });
+
+  it("main-to-renderer preload emits syntactically valid object (no leading comma)", async () => {
+    // Regression: previously the template inserted `,\n    on...` unconditionally,
+    // which produced a leading comma when there was no invoke/send method before it.
+    const result = await tool({
+      channelName: "progress-update",
+      direction: "main-to-renderer",
+      description: "Streams progress",
+      args: "{ percent: number }",
+    });
+    // Extract the preload code block and verify it parses as valid JS.
+    const match = result.match(/## Preload Script\n\n```typescript\n([\s\S]*?)\n```/);
+    assert.ok(match, "preload code block must be present");
+    const preload = match[1];
+    assert.ok(!/\{\s*\/\/[^\n]*\n\s*,/.test(preload), `preload has a leading comma in the object literal:\n${preload}`);
+    // The exposed object should open with a comment then the on* method — not a stray comma.
+    assert.ok(
+      /\{\s*\/\/[^\n]*\n\s*onProgressUpdate:/.test(preload),
+      "on* method must follow the description comment directly",
+    );
+  });
 });
 
 describe("electron_generate_preload_bridge", () => {
@@ -151,6 +172,17 @@ describe("electron_audit_ipc_security", () => {
       });`,
     });
     assert.ok(result.includes("PASSED") || result.includes("No security issues"));
+  });
+
+  it("flags ipcRenderer method-reference exposure as CRITICAL", async () => {
+    // Regression: the previous regex only matched bare `ipcRenderer` values.
+    // `{ send: ipcRenderer.send }` leaks arbitrary-channel send capability
+    // to the renderer and must be flagged the same way.
+    const result = await tool({
+      preloadCode: `contextBridge.exposeInMainWorld('api', { send: ipcRenderer.send, invoke: ipcRenderer.invoke });`,
+    });
+    assert.ok(result.includes("CRITICAL"), `expected CRITICAL finding, got:\n${result}`);
+    assert.ok(result.includes("Raw ipcRenderer"));
   });
 });
 
@@ -218,6 +250,37 @@ describe("electron_audit_security", () => {
       browserWindowConfig: "{ webPreferences: { contextIsolation: true, sandbox: true } }",
     });
     assert.ok(result.includes("PASS"));
+  });
+
+  // Helper: extract the status icon for a given check id from the report.
+  const statusOf = (report: string, id: number): string | null => {
+    const match = report.match(new RegExp(`## \\[(PASS|FAIL|WARN)\\] #${id}:`));
+    return match ? match[1] : null;
+  };
+
+  it("flags unsafe-inline in CSP even without unsafe-eval", async () => {
+    // Regression: previously unsafe-inline was only mentioned inside the
+    // unsafe-eval branch's message string, so unsafe-inline alone incorrectly
+    // reported PASS for the CSP check.
+    const result = await tool({
+      htmlContent: `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'">`,
+    });
+    assert.strictEqual(statusOf(result, 6), "WARN", `CSP with unsafe-inline should WARN, got:\n${result}`);
+    assert.ok(result.includes("unsafe-inline"));
+  });
+
+  it("derives supported-version window from embedded knowledge", async () => {
+    // Regression: the supported floor was hardcoded to 39. Old Electron version
+    // should warn; current stable should pass.
+    const oldVersion = await tool({
+      packageJson: `{ "devDependencies": { "electron": "^20.0.0" } }`,
+    });
+    assert.strictEqual(statusOf(oldVersion, 13), "WARN", `v20 should WARN, got:\n${oldVersion}`);
+
+    const currentVersion = await tool({
+      packageJson: `{ "devDependencies": { "electron": "^41.0.0" } }`,
+    });
+    assert.strictEqual(statusOf(currentVersion, 13), "PASS", `v41 should PASS, got:\n${currentVersion}`);
   });
 });
 
@@ -318,6 +381,30 @@ describe("electron_diagnose_build_error", () => {
     });
     assert.ok(result.includes("Unrecognized") || result.includes("troubleshooting"));
   });
+
+  it("suppresses macOS-specific diagnoses when platform is win32", async () => {
+    // Regression: platform/buildTool inputs were previously silently ignored.
+    // A Windows signing error should NOT produce a macOS notarization diagnosis.
+    const errorOutput = [
+      "Error: signtool.exe failed",
+      "errSecInternalComponent — signing identity not found",
+      "notarytool: Apple notarization failed",
+    ].join("\n");
+    const winResult = await tool({
+      errorOutput,
+      platform: "win32",
+      buildTool: "electron-builder",
+    });
+    assert.ok(winResult.includes("Scoped to platform: **win32**"), "report should declare scoping");
+    assert.ok(winResult.includes("Windows code signing"), "Windows diagnosis should appear");
+    assert.ok(!winResult.includes("macOS code signing identity"), "macOS identity diagnosis must be suppressed");
+    assert.ok(!winResult.includes("macOS notarization failed"), "macOS notarization diagnosis must be suppressed");
+
+    // Same input with platform=unknown should include all diagnoses.
+    const allResult = await tool({ errorOutput });
+    assert.ok(allResult.includes("macOS code signing identity"));
+    assert.ok(allResult.includes("macOS notarization failed"));
+  });
 });
 
 describe("electron_configure_auto_update", () => {
@@ -375,6 +462,21 @@ describe("electron_configure_deep_linking", () => {
     });
     assert.ok(result.includes("/settings"));
     assert.ok(result.includes("Open settings"));
+  });
+
+  it("imports node:path since the generated code uses path.resolve", async () => {
+    // Regression: the mainCode called `path.resolve(process.argv[1])` but
+    // only imported `{ app, BrowserWindow }` from electron, so the scaffolded
+    // file would not run.
+    const result = await tool({ protocol: "myapp" });
+    const match = result.match(/## Main Process\n\n```typescript\n([\s\S]*?)\n```/);
+    assert.ok(match, "main process code block must be present");
+    const mainCode = match[1];
+    assert.ok(mainCode.includes("path.resolve"), "sanity: path.resolve is used");
+    assert.ok(
+      /import\s+\*\s+as\s+path\s+from\s+["']node:path["']/.test(mainCode),
+      `generated deep-link code must import node:path, got:\n${mainCode}`,
+    );
   });
 });
 

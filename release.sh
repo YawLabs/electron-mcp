@@ -145,7 +145,7 @@ else
     info "Tag v${VERSION} created"
   fi
 
-  git push origin main --tags
+  git push origin main --follow-tags
   info "Pushed to origin"
 fi
 

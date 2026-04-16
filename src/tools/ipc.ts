@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { KNOWLEDGE_VERSION } from "../knowledge.js";
 
 export const ipcTools = [
   {
@@ -87,17 +88,26 @@ export function register${camelName.charAt(0).toUpperCase() + camelName.slice(1)
       }
 
       // ── Preload bridge ──
-      const preloadMethod = hasReturn
-        ? `${camelName}: (${hasArgs ? `args: ${argType}` : ""}): Promise<${retType}> => ipcRenderer.invoke("${input.channelName}"${hasArgs ? ", args" : ""})`
-        : `${camelName}: (${hasArgs ? `args: ${argType}` : ""}): void => ipcRenderer.send("${input.channelName}"${hasArgs ? ", args" : ""})`;
+      // Build up the methods the exposed object should include, then join them
+      // with a comma separator. Doing it this way avoids the leading-comma bug
+      // that appears when `direction === "main-to-renderer"` produces no
+      // invoke/send method but still needs an `on*` listener.
+      const preloadMethods: string[] = [];
 
-      let onMethod = "";
+      if (input.direction === "renderer-to-main" || input.direction === "bidirectional") {
+        const invokeOrSend = hasReturn
+          ? `${camelName}: (${hasArgs ? `args: ${argType}` : ""}): Promise<${retType}> => ipcRenderer.invoke("${input.channelName}"${hasArgs ? ", args" : ""})`
+          : `${camelName}: (${hasArgs ? `args: ${argType}` : ""}): void => ipcRenderer.send("${input.channelName}"${hasArgs ? ", args" : ""})`;
+        preloadMethods.push(invokeOrSend);
+      }
+
       if (input.direction === "main-to-renderer" || input.direction === "bidirectional") {
-        onMethod = `,\n    on${camelName.charAt(0).toUpperCase() + camelName.slice(1)}: (callback: (${hasArgs ? `data: ${argType}` : ""}) => void): (() => void) => {
+        const onMethod = `on${camelName.charAt(0).toUpperCase() + camelName.slice(1)}: (callback: (${hasArgs ? `data: ${argType}` : ""}) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent${hasArgs ? `, data: ${argType}` : ""}) => callback(${hasArgs ? "data" : ""});
       ipcRenderer.on("${input.channelName}", handler);
       return () => ipcRenderer.removeListener("${input.channelName}", handler);
     }`;
+        preloadMethods.push(onMethod);
       }
 
       const preload = `// preload.ts
@@ -105,7 +115,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("${ns}", {
   // ${input.description}
-  ${input.direction === "main-to-renderer" ? "" : `${preloadMethod}`}${onMethod}
+  ${preloadMethods.join(",\n  ")}
 });`;
 
       sections.push(`## Preload Script\n\n\`\`\`typescript\n${preload}\n\`\`\``);
@@ -357,9 +367,14 @@ declare global {
         const code = input.preloadCode;
 
         // Check for raw ipcRenderer exposure.
-        // Matches `ipcRenderer` as a bare value (shorthand `{ ipcRenderer }` or `{ x: ipcRenderer }`),
-        // but not as a call target like `ipcRenderer.invoke(...)` inside a wrapping function.
-        if (/contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer\s*[,}]/.test(code)) {
+        // Matches `ipcRenderer` as a bare value (shorthand `{ ipcRenderer }`, `{ x: ipcRenderer }`)
+        // OR a bare method reference like `{ send: ipcRenderer.send }` where `send`/`invoke`/`on` etc.
+        // are passed as the exposed value directly (not as a call target inside a wrapping function).
+        // `ipcRenderer.invoke('x')` inside a closure still won't match because `(` is not in the
+        // terminator set — only object/object-member terminators are.
+        const rawExposureRe =
+          /contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer(?:\.(?:send|invoke|on|once|sendSync|postMessage|sendTo|sendToHost|removeListener|removeAllListeners))?\s*(?:[,}]|$)/;
+        if (rawExposureRe.test(code)) {
           findings.push({
             severity: "CRITICAL",
             issue: "Raw ipcRenderer exposed through contextBridge",
@@ -768,7 +783,7 @@ app.on("activate", () => {
         .describe("Target Electron version for version-specific guidance (e.g. '28', '33', '41'). Defaults to latest."),
     }),
     handler: async (input: { topic: string; electronVersion?: string }) => {
-      const ver = input.electronVersion ? Number.parseInt(input.electronVersion, 10) : 41;
+      const ver = input.electronVersion ? Number.parseInt(input.electronVersion, 10) : KNOWLEDGE_VERSION.electronStable;
 
       const explanations: Record<string, string> = {
         overview: `# Electron Process Model Overview

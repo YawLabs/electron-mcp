@@ -25,11 +25,16 @@ export const buildTools = [
     }),
     handler: async (input: { errorOutput: string; buildTool?: string; platform?: string }) => {
       const output = input.errorOutput;
+      const platform = input.platform ?? "unknown";
+      const buildTool = input.buildTool ?? "unknown";
+      // Scope checks by platform: "unknown" means fall back to detection from output.
+      const includeMac = platform === "unknown" || platform === "darwin";
+      const includeWin = platform === "unknown" || platform === "win32";
       const diagnoses: Array<{ problem: string; cause: string; fix: string }> = [];
 
       // Code signing errors
       if (/code\s*sign|codesign|sign.*fail|ERR_ELECTRON_BUILDER_CANNOT_EXECUTE|notarize|notarization/i.test(output)) {
-        if (/identity.*not\s*found|no\s*signing\s*identity|errSecInternalComponent/i.test(output)) {
+        if (includeMac && /identity.*not\s*found|no\s*signing\s*identity|errSecInternalComponent/i.test(output)) {
           diagnoses.push({
             problem: "macOS code signing identity not found",
             cause:
@@ -44,7 +49,7 @@ export const buildTools = [
           });
         }
 
-        if (/notariz|staple|altool|notarytool/i.test(output)) {
+        if (includeMac && /notariz|staple|altool|notarytool/i.test(output)) {
           diagnoses.push({
             problem: "macOS notarization failed",
             cause:
@@ -66,7 +71,7 @@ export const buildTools = [
           });
         }
 
-        if (/signtool|windows.*sign|authenticode|Azure.*Sign/i.test(output)) {
+        if (includeWin && /signtool|windows.*sign|authenticode|Azure.*Sign/i.test(output)) {
           diagnoses.push({
             problem: "Windows code signing failed",
             cause:
@@ -256,6 +261,12 @@ electron-builder can auto-convert from a 512x512+ PNG if you only provide one fo
       }
 
       let report = "# Build Error Diagnosis\n\n";
+      if (platform !== "unknown" || buildTool !== "unknown") {
+        const scope: string[] = [];
+        if (platform !== "unknown") scope.push(`platform: **${platform}**`);
+        if (buildTool !== "unknown") scope.push(`build tool: **${buildTool}**`);
+        report += `_Scoped to ${scope.join(", ")}. Platform-specific diagnoses from other platforms are suppressed._\n\n`;
+      }
       for (const [i, d] of diagnoses.entries()) {
         report += `## ${i + 1}. ${d.problem}\n\n**Cause:** ${d.cause}\n\n**Fix:**\n\n${d.fix}\n\n`;
       }
@@ -509,6 +520,7 @@ ${publishConfig},
 
       const mainCode = `// src/main/deep-link.ts
 import { app, BrowserWindow } from "electron";
+import * as path from "node:path";
 
 const PROTOCOL = "${proto}";
 

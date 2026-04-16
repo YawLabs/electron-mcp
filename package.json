@@ -1,6 +1,6 @@
 {
   "name": "@yawlabs/electron-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Electron.js MCP server — IPC scaffolding, security auditing, build tooling, and development intelligence for AI assistants",
   "license": "MIT",
   "author": "YawLabs <contact@yaw.sh>",

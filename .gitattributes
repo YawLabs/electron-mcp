@@ -1,0 +1,14 @@
+# Normalize all text files to LF in the repository.
+# Windows working trees may check out as CRLF depending on core.autocrlf,
+# but the committed form is always LF. This keeps Biome's formatter
+# (which expects LF) consistent across platforms and prevents phantom
+# "format" lint failures when contributors edit on Windows.
+* text=auto eol=lf
+
+# Binary files — do not touch line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
