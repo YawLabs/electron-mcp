@@ -1,6 +1,6 @@
 {
   "name": "@yawlabs/electron-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Electron.js MCP server — IPC scaffolding, security auditing, build tooling, and development intelligence for AI assistants",
   "license": "MIT",
   "author": "YawLabs <contact@yaw.sh>",
@@ -38,6 +38,10 @@
     "prepublishOnly": "npm run build && node --test dist/**/*.test.js"
   },
   "dependencies": {},
+  "overrides": {
+    "hono": "^4.12.14",
+    "@hono/node-server": "^1.19.13"
+  },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
