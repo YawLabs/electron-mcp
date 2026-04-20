@@ -13,10 +13,14 @@ export const performanceTools = [
       openWorldHint: false,
     },
     inputSchema: z.object({
-      mainCode: z.string().optional().describe("Main process code to analyze"),
-      rendererCode: z.string().optional().describe("Renderer process code to analyze"),
-      preloadCode: z.string().optional().describe("Preload script code to analyze"),
-      packageJson: z.string().optional().describe("package.json content to check for bundling and dependencies"),
+      mainCode: z.string().max(500_000).optional().describe("Main process code to analyze"),
+      rendererCode: z.string().max(500_000).optional().describe("Renderer process code to analyze"),
+      preloadCode: z.string().max(500_000).optional().describe("Preload script code to analyze"),
+      packageJson: z
+        .string()
+        .max(500_000)
+        .optional()
+        .describe("package.json content to check for bundling and dependencies"),
     }),
     handler: async (input: {
       mainCode?: string;

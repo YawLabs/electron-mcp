@@ -16,23 +16,30 @@ export const ipcTools = [
     inputSchema: z.object({
       channelName: z
         .string()
+        .max(200)
         .describe("The IPC channel name, e.g. 'get-user-data', 'save-settings', 'open-file-dialog'"),
       direction: z
         .enum(["renderer-to-main", "main-to-renderer", "bidirectional"])
         .describe("Communication direction for the channel"),
-      description: z.string().describe("What this IPC channel does, e.g. 'Fetches user profile from the database'"),
+      description: z
+        .string()
+        .max(500)
+        .describe("What this IPC channel does, e.g. 'Fetches user profile from the database'"),
       args: z
         .string()
+        .max(1000)
         .optional()
         .describe("TypeScript type for the arguments, e.g. '{ userId: string }' or 'string'. Omit for no arguments."),
       returnType: z
         .string()
+        .max(1000)
         .optional()
         .describe(
           "TypeScript type for the return value (renderer-to-main only), e.g. '{ name: string; email: string }'. Omit for void.",
         ),
       apiNamespace: z
         .string()
+        .max(100)
         .optional()
         .describe(
           "The namespace on window.electronAPI to group this under, e.g. 'users', 'settings'. Defaults to 'api'.",
@@ -240,21 +247,27 @@ window.${ns}.${camelName}(${hasArgs ? "args" : ""});`;
       methods: z
         .array(
           z.object({
-            name: z.string().describe("Method name exposed to renderer, e.g. 'openFile', 'saveSettings'"),
-            channel: z.string().describe("IPC channel name, e.g. 'open-file', 'save-settings'"),
+            name: z.string().max(200).describe("Method name exposed to renderer, e.g. 'openFile', 'saveSettings'"),
+            channel: z.string().max(200).describe("IPC channel name, e.g. 'open-file', 'save-settings'"),
             type: z
               .enum(["invoke", "send", "on"])
               .describe(
                 "'invoke' for request/response (ipcRenderer.invoke), 'send' for fire-and-forget (ipcRenderer.send), 'on' for listening to main process events",
               ),
-            args: z.string().optional().describe("TypeScript type for arguments, e.g. '{ path: string }'"),
-            returnType: z.string().optional().describe("TypeScript return type (invoke only), e.g. 'string[]'"),
-            description: z.string().optional().describe("What this method does"),
+            args: z.string().max(1000).optional().describe("TypeScript type for arguments, e.g. '{ path: string }'"),
+            returnType: z
+              .string()
+              .max(1000)
+              .optional()
+              .describe("TypeScript return type (invoke only), e.g. 'string[]'"),
+            description: z.string().max(500).optional().describe("What this method does"),
           }),
         )
+        .max(50)
         .describe("Array of methods to expose through the preload bridge"),
       namespace: z
         .string()
+        .max(100)
         .optional()
         .describe("The property name on window, e.g. 'electronAPI'. Defaults to 'electronAPI'."),
     }),
@@ -353,10 +366,15 @@ declare global {
       openWorldHint: false,
     },
     inputSchema: z.object({
-      preloadCode: z.string().optional().describe("Content of the preload script (preload.ts/js) to analyze"),
-      mainCode: z.string().optional().describe("Content of the main process IPC handler code to analyze"),
+      preloadCode: z
+        .string()
+        .max(500_000)
+        .optional()
+        .describe("Content of the preload script (preload.ts/js) to analyze"),
+      mainCode: z.string().max(500_000).optional().describe("Content of the main process IPC handler code to analyze"),
       rendererCode: z
         .string()
+        .max(500_000)
         .optional()
         .describe("Content of renderer code that uses IPC, to check for anti-patterns"),
     }),

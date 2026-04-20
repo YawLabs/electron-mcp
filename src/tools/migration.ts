@@ -182,8 +182,8 @@ export const migrationTools = [
       openWorldHint: false,
     },
     inputSchema: z.object({
-      currentVersion: z.number().int().min(20).max(41).describe("Current Electron major version (e.g. 28)"),
-      targetVersion: z.number().int().min(20).max(41).describe("Target Electron major version (e.g. 41)"),
+      currentVersion: z.number().int().min(28).max(41).describe("Current Electron major version (e.g. 28)"),
+      targetVersion: z.number().int().min(28).max(41).describe("Target Electron major version (e.g. 41)"),
     }),
     handler: async (input: { currentVersion: number; targetVersion: number }) => {
       if (input.currentVersion >= input.targetVersion) {
@@ -271,7 +271,7 @@ export const migrationTools = [
       openWorldHint: false,
     },
     inputSchema: z.object({
-      code: z.string().describe("Source code to scan for deprecated API usage"),
+      code: z.string().max(500_000).describe("Source code to scan for deprecated API usage"),
       electronVersion: z
         .number()
         .int()

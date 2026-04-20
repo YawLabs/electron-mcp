@@ -4,6 +4,21 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-04-20
+
+First stable release. The tool surface is frozen: 18 tools across IPC, security, build, migration, performance, and reference categories. Future breaking changes will bump the major.
+
+### Changed
+- **Breaking:** `electron_migrate_version` now accepts `currentVersion`/`targetVersion` in the range v28–v41, matching the actual coverage of the embedded breaking-changes table. Previously the schema accepted v20–v41 but silently returned "no changes recorded" for anything below v28. Callers migrating from very old Electron should consult the official release notes directly.
+- `KNOWLEDGE_VERSION.supportedRange` narrowed from `{min: 20, max: 41}` to `{min: 28, max: 41}` to reflect the truth. README updated to match.
+
+### Added
+- Per-field length caps on every code-scanning input (`preloadCode`, `mainCode`, `rendererCode`, `packageJson`, `htmlContent`, `browserWindowConfig`, `errorOutput`, `code`) so pathological inputs cannot stall regex analysis or exhaust memory. Maximum 500 KB per field.
+- Length caps on scaffolder identifier/type fields (`channelName`, `args`, `returnType`, `apiNamespace`, bridge `methods[]`) so template interpolation can't be abused to produce huge outputs. Bridge `methods` array capped at 50 entries.
+- Regression test: a 500 KB benign input to `electron_lint_security` must return in under a second (guards against regex-backtracking regressions).
+- Integration test now asserts validation errors include the offending field name so MCP clients and their agents can act on the message.
+- `electron_knowledge_version` test now pins the supported range string so a future drift between schema and advertised range is caught by CI.
+
 ## [0.2.1] — 2026-04-16
 
 ### Fixed

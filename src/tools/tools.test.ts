@@ -24,6 +24,11 @@ const byName = (name: string): Handler => {
   if (!tool) throw new Error(`Tool not found: ${name}`);
   return tool.handler as Handler;
 };
+const schemaOf = (name: string) => {
+  const tool = allTools.find((t) => t.name === name);
+  if (!tool) throw new Error(`Tool not found: ${name}`);
+  return tool.inputSchema;
+};
 
 describe("tool registration", () => {
   it("exports 18 tools", () => {
@@ -360,6 +365,22 @@ describe("electron_lint_security", () => {
     });
     assert.ok(result.includes("CLEAN") || result.includes("No security issues"));
   });
+
+  it("schema rejects code larger than the per-field cap", () => {
+    const schema = schemaOf("electron_lint_security");
+    const oversized = "a".repeat(500_001);
+    const parsed = schema.safeParse({ code: oversized, fileType: "main" });
+    assert.strictEqual(parsed.success, false, "expected zod to reject >500KB input");
+  });
+
+  it("scans a large benign input in under a second (ReDoS guard)", async () => {
+    const big = "// safe comment\n".repeat(30_000);
+    const start = Date.now();
+    const result = await tool({ code: big, fileType: "main" });
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed < 1000, `scan took ${elapsed}ms on ~500KB of benign input`);
+    assert.ok(typeof result === "string" && result.length > 0);
+  });
 });
 
 describe("electron_diagnose_build_error", () => {
@@ -629,5 +650,13 @@ describe("electron_knowledge_version", () => {
     assert.ok(result.includes("2026-04-13"), "lastVerified must match KNOWLEDGE_VERSION");
     assert.ok(result.includes("v41"), "electronStable must match");
     assert.ok(result.includes("electronjs.org"), "must include official source URL");
+  });
+
+  it("advertises the narrowed supported range (v28 – v41)", async () => {
+    const result = await tool({});
+    assert.ok(
+      /v28\s*[–-]\s*v41/.test(result),
+      `supported range must cover exactly what breakingChanges covers; got:\n${result}`,
+    );
   });
 });

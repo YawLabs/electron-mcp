@@ -9,7 +9,7 @@
 export const KNOWLEDGE_VERSION = {
   lastVerified: "2026-04-13",
   electronStable: 41,
-  supportedRange: { min: 20, max: 41 },
+  supportedRange: { min: 28, max: 41 },
   sources: {
     breakingChanges: "https://www.electronjs.org/docs/latest/breaking-changes",
     security: "https://www.electronjs.org/docs/latest/tutorial/security",

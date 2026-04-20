@@ -13,7 +13,7 @@ export const buildTools = [
       openWorldHint: false,
     },
     inputSchema: z.object({
-      errorOutput: z.string().describe("The build error output (stderr/stdout) to diagnose"),
+      errorOutput: z.string().max(500_000).describe("The build error output (stderr/stdout) to diagnose"),
       buildTool: z
         .enum(["electron-builder", "electron-forge", "electron-packager", "unknown"])
         .optional()

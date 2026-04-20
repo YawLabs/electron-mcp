@@ -19,7 +19,7 @@ The single source of truth for the vintage is `src/knowledge.ts`. Every tool res
 
 1. **Add a breakingChanges entry.** Open `src/tools/migration.ts`, add a new key for the new major number in `breakingChanges`, and list every breaking change from the official release notes (https://www.electronjs.org/docs/latest/breaking-changes). Use the existing `{ change, migration, severity }` shape.
 2. **Extend `deprecatedApis`.** Any new deprecations or removals in this release → add rows.
-3. **Widen the zod range.** In `migration.ts` both `currentVersion` and `targetVersion` use `.min(20).max(N)` — bump the max to the new major.
+3. **Widen the zod range.** In `migration.ts` both `currentVersion` and `targetVersion` use `.min(28).max(N)` — bump the max to the new major. (The floor moves only when a major at the bottom of the range has its `breakingChanges` entry removed.)
 4. **Refresh security defaults.** If the new Electron major changes a default (e.g. a new webPreferences default), update the relevant check in `src/tools/security.ts`.
 5. **Bump `KNOWLEDGE_VERSION`.** In `src/knowledge.ts`:
    - `lastVerified` → today's date

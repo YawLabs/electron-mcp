@@ -22,12 +22,21 @@ export const securityTools = [
     inputSchema: z.object({
       browserWindowConfig: z
         .string()
+        .max(500_000)
         .optional()
         .describe("BrowserWindow constructor options as a JSON string or code snippet"),
-      packageJson: z.string().optional().describe("Content of package.json to check Electron version and dependencies"),
-      preloadCode: z.string().optional().describe("Content of the preload script"),
-      htmlContent: z.string().optional().describe("Content of the main HTML file to check CSP meta tags"),
-      electronVersion: z.string().optional().describe("Electron major version if not in package.json (e.g. '41')"),
+      packageJson: z
+        .string()
+        .max(500_000)
+        .optional()
+        .describe("Content of package.json to check Electron version and dependencies"),
+      preloadCode: z.string().max(500_000).optional().describe("Content of the preload script"),
+      htmlContent: z.string().max(500_000).optional().describe("Content of the main HTML file to check CSP meta tags"),
+      electronVersion: z
+        .string()
+        .max(20)
+        .optional()
+        .describe("Electron major version if not in package.json (e.g. '41')"),
     }),
     handler: async (input: {
       browserWindowConfig?: string;
@@ -589,7 +598,7 @@ app.whenReady().then(() => {
       openWorldHint: false,
     },
     inputSchema: z.object({
-      code: z.string().describe("Source code to analyze (main process, preload, or renderer)"),
+      code: z.string().max(500_000).describe("Source code to analyze (main process, preload, or renderer)"),
       fileType: z
         .enum(["main", "preload", "renderer"])
         .optional()

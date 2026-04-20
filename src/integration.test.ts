@@ -93,15 +93,29 @@ describe("integration: stdio MCP server", () => {
     }
   });
 
-  it("returns isError for invalid tool input", async () => {
+  it("surfaces an actionable error that names the failing field on invalid input", async () => {
     const { client, close } = await connect();
     try {
-      const res = await client.callTool({
-        name: "electron_migrate_version",
-        arguments: { currentVersion: "not a number", targetVersion: 41 },
-      });
-      // MCP SDK either surfaces a protocol error or isError:true content
-      assert.ok(res.isError === true || res.content, "expected an error result for invalid input");
+      let sawError = false;
+      let message = "";
+      try {
+        const res = await client.callTool({
+          name: "electron_migrate_version",
+          arguments: { currentVersion: "not a number", targetVersion: 41 },
+        });
+        // SDK may resolve with isError + content, or with a protocol-level error
+        sawError = res.isError === true;
+        const content = res.content as Array<{ type: string; text: string }> | undefined;
+        message = content?.[0]?.text ?? "";
+      } catch (err) {
+        sawError = true;
+        message = err instanceof Error ? err.message : String(err);
+      }
+      assert.ok(sawError, `expected validation failure to surface as an error; got: ${message}`);
+      assert.ok(
+        /currentVersion/i.test(message),
+        `error must name the failing field so callers can fix it; got: ${message}`,
+      );
     } finally {
       await close();
     }
