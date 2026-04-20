@@ -8,6 +8,10 @@
     "type": "git",
     "url": "git+https://github.com/YawLabs/electron-mcp.git"
   },
+  "homepage": "https://github.com/YawLabs/electron-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/YawLabs/electron-mcp/issues"
+  },
   "keywords": [
     "electron",
     "electronjs",
