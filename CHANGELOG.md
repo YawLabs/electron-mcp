@@ -4,6 +4,13 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-04-24
+
+### Infrastructure
+
+- Removed `.github/workflows/release.yml` and `.github/workflows/ci.yml`. Releases are now cut exclusively via `./release.sh <version>` from a maintainer's machine; lint, build, and test gates still run inside the script before publish. No behavior change in the published package.
+- `release.sh` trimmed of dead CI branches (`IS_CI`, `GITHUB_REF_NAME`, `--provenance`). Tag is now pushed explicitly so lightweight tags work alongside annotated ones.
+
 ## [1.1.0] - 2026-04-24
 
 ### Fixed
