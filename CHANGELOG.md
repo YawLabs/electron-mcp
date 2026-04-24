@@ -4,7 +4,30 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — 2026-04-20
+## [1.1.0] - 2026-04-24
+
+### Fixed
+- `electron_generate_window_manager` modal windows were never actually modal: the scaffolded code put `parent: this.windows.get('main')` inside a class-field initializer, which evaluates at construction time when no windows exist yet, so the `parent` option was frozen at `undefined`. Generated `createWindow` now resolves the parent at call time from the live windows map.
+- `electron_audit_security` and `electron_explain_process_model` no longer emit "Electron NaN" when `electronVersion` is unparseable. `parseInt` results are guarded with `Number.isFinite` and fall back to `KNOWLEDGE_VERSION.electronStable`.
+- `electron_audit_security` check #1 (HTTPS) was running against `browserWindowConfig`, which almost never contains URLs -- the check rarely fired in practice. It now scans whichever code inputs are provided and catches `http://` in main-process `loadURL`/`loadFile` calls.
+- `electron_diagnose_build_error` no longer attributes every `MODULE_NOT_FOUND` to ASAR packaging. A bare "cannot find module 'foo'" (from a missed devDep) is not diagnosed; the packaging diagnosis now requires a packaging-specific signal (`app.asar`, `resourcesPath`, `extraResources`, `.app/Contents`).
+- `electron_configure_deep_linking` exported `handleDeepLinkOnLaunch` but never showed the caller where to invoke it, so cold-start deep links on Windows and Linux were silently broken for anyone following the scaffold. Output now includes a "Wire into the Main Entry Point" section calling it inside `app.whenReady()`.
+
+### Added
+- `mainCode` input on `electron_audit_security`. Scanned by the HTTPS check so insecure URLs in `loadURL`/`loadFile` are caught.
+- Regression tests covering every fix in this release (modal parent resolution, NaN fallback, `http://` in mainCode, bare MODULE_NOT_FOUND not misattributed, packaging-signal MODULE_NOT_FOUND is attributed, `handleDeepLinkOnLaunch` call site shown).
+
+### Changed
+- Unified severity taxonomy across every audit tool to `CRITICAL | HIGH | MEDIUM | LOW`. Previously `electron_audit_ipc_security` used `WARNING` for listener-without-cleanup and `sendSync`; both are now `LOW`. Output is markdown (no structured severity field), so downstream consumers that render the report as text are unaffected.
+- Replaced Unicode punctuation in tool output with ASCII equivalents (em-dashes -> `--`, en-dashes -> `-`, arrows `-> <- <->`, `!=` for `≠`, `*` for bullets) to prevent Windows ConPTY mojibake. Box-drawing characters in ASCII-art diagrams are intentionally preserved.
+- `electron_diagnose_build_error` CSP check in `electron_audit_security` dropped a redundant case-sensitive regex branch (the `/i` flag already covers both cases).
+- Test suite now derives `EXPECTED_TOOL_COUNT` from the per-category tool arrays instead of hard-coding `18`, so adding a tool only requires updating one place.
+
+### Infrastructure
+- Documented the `hono` / `@hono/node-server` overrides in `CLAUDE.md`. They pin transitive dependencies of `@modelcontextprotocol/sdk`'s HTTP transport.
+- Added a comment in `migration.ts` explaining why deprecated-API entries with `deprecated < 28` (e.g., `@electron/remote` deprecated v14) are intentionally kept -- the scanner reports them regardless of current version, while the migration tool filters by the v28-v41 range.
+
+## [1.0.0] - 2026-04-20
 
 First stable release. The tool surface is frozen: 18 tools across IPC, security, build, migration, performance, and reference categories. Future breaking changes will bump the major.
 

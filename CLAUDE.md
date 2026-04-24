@@ -41,3 +41,15 @@ This MCP does NOT wrap a REST API. It is a development intelligence server:
 ## Release process
 
 Run `./release.sh <version>` or trigger from CI with a version tag.
+
+## Dependency overrides
+
+`package.json` has an `overrides` block pinning `hono` and `@hono/node-server`. These are **transitive dependencies of `@modelcontextprotocol/sdk`**, not direct deps — the SDK's HTTP transport uses Hono internally. The overrides keep our install tree on versions without known CVEs and prevent an older transitive Hono from being hoisted in.
+
+Before dropping or bumping these:
+
+1. Check the SDK's current peer range (`npm ls hono` in a fresh install).
+2. Confirm there's no active advisory against the target version.
+3. Re-run the full test suite, including integration.
+
+The bundled `dist/index.js` does not ship Hono because we only use the stdio transport, but the overrides still affect the install graph and any devtime use of the SDK's HTTP transport.

@@ -5,7 +5,7 @@ export const knowledgeTools = [
   {
     name: "electron_knowledge_version",
     description:
-      "Return metadata about the embedded Electron knowledge used by this MCP's analysis tools — the date it was last verified against official Electron docs, the current Electron stable version at that time, and the supported version range for migration/deprecation checks. Call this when you need to know whether the advice from other tools is current.",
+      "Return metadata about the embedded Electron knowledge used by this MCP's analysis tools -- the date it was last verified against official Electron docs, the current Electron stable version at that time, and the supported version range for migration/deprecation checks. Call this when you need to know whether the advice from other tools is current.",
     annotations: {
       title: "Get embedded-knowledge version",
       readOnlyHint: true,
@@ -21,7 +21,7 @@ export const knowledgeTools = [
         "",
         `- **Last verified:** ${lastVerified}`,
         `- **Electron stable at verification:** v${electronStable}`,
-        `- **Supported version range:** v${supportedRange.min} – v${supportedRange.max}`,
+        `- **Supported version range:** v${supportedRange.min} - v${supportedRange.max}`,
         "",
         "## Sources",
         "",

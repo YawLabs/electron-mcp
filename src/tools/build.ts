@@ -180,8 +180,15 @@ const dataDir = app.getPath("userData"); // Writable
         });
       }
 
-      // Missing resources
-      if (/ENOENT|file\s*not\s*found|cannot\s*find\s*module|MODULE_NOT_FOUND/i.test(output)) {
+      // Missing resources -- require a packaging-specific signal so we don't
+      // attribute a generic "npm install missed a devDep" MODULE_NOT_FOUND to
+      // ASAR/extraResources.
+      const looksLikePackagingIssue =
+        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents/i.test(output);
+      if (
+        looksLikePackagingIssue &&
+        /ENOENT|file\s*not\s*found|cannot\s*find\s*module|MODULE_NOT_FOUND/i.test(output)
+      ) {
         diagnoses.push({
           problem: "Missing file or module in packaged app",
           cause:
@@ -499,7 +506,7 @@ ${publishConfig},
       singleInstance: z
         .boolean()
         .optional()
-        .describe("Enforce single instance — new URLs focus the existing window (default true)"),
+        .describe("Enforce single instance -- new URLs focus the existing window (default true)"),
       routes: z
         .array(
           z.object({
@@ -646,9 +653,21 @@ export function handleDeepLinkOnLaunch(): void {
   }
 }`;
 
+      const entryUsage = `// src/main/index.ts
+import { app } from "electron";
+import { handleDeepLinkOnLaunch } from "./deep-link.js";
+
+app.whenReady().then(() => {
+  createMainWindow();
+  // Cold-start deep link: on Windows/Linux the URL is in process.argv at launch.
+  // Call AFTER the main window exists so handleDeepLink can forward to it.
+  handleDeepLinkOnLaunch();
+});`;
+
       const sections = [
         `# Deep Linking: ${proto}://\n`,
         `## Main Process\n\n\`\`\`typescript\n${mainCode}\n\`\`\``,
+        `## Wire into the Main Entry Point\n\n\`\`\`typescript\n${entryUsage}\n\`\`\`\n\nCalling \`handleDeepLinkOnLaunch\` is what makes cold-start deep links work on Windows and Linux; the \`open-url\` listener already covers macOS and the \`second-instance\` listener covers subsequent launches.`,
         `## Preload Addition\n\n\`\`\`typescript\n${preloadAddition}\n\`\`\``,
         `## electron-builder Config\n\n\`\`\`json\n${builderConfig}\n\`\`\``,
         `## Electron Forge Config\n\n\`\`\`json\n${forgeConfig}\n\`\`\``,
@@ -782,7 +801,7 @@ function createMainWindow(): BrowserWindow {
   } else {
     win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
-${features.includes("tray") ? '\n  // Don\'t quit on window close — hide to tray\n  win.on("close", (event) => {\n    event.preventDefault();\n    win.hide();\n  });\n' : ""}
+${features.includes("tray") ? '\n  // Don\'t quit on window close -- hide to tray\n  win.on("close", (event) => {\n    event.preventDefault();\n    win.hide();\n  });\n' : ""}
   return win;
 }
 ${features.includes("tray") ? `\nfunction createTray(win: BrowserWindow): Tray {\n  const icon = nativeImage.createFromPath(path.join(__dirname, "../../resources/icon.png"));\n  const tray = new Tray(icon.resize({ width: 16, height: 16 }));\n  tray.setContextMenu(Menu.buildFromTemplate([\n    { label: "Show", click: () => win.show() },\n    { type: "separator" },\n    { label: "Quit", click: () => { win.destroy(); app.quit(); } },\n  ]));\n  tray.on("click", () => win.show());\n  return tray;\n}\n` : ""}

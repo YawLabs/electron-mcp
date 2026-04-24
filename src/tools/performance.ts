@@ -33,7 +33,7 @@ export const performanceTools = [
       if (input.mainCode) {
         const code = input.mainCode;
 
-        // 1. Eager module loading — top-level require/import of heavy modules
+        // 1. Eager module loading -- top-level require/import of heavy modules
         const heavyModules = [
           "sharp",
           "sqlite3",
@@ -87,7 +87,7 @@ export const performanceTools = [
             pattern: `${bwCount} BrowserWindow instances created`,
             severity: "MEDIUM",
             detail: `Each BrowserWindow adds 150-250MB of memory. ${bwCount} windows at startup means ${bwCount * 200}MB+ just for empty windows.`,
-            fix: "Create windows lazily — only when the user requests them. Consider using tabs or views instead of separate windows.",
+            fix: "Create windows lazily -- only when the user requests them. Consider using tabs or views instead of separate windows.",
           });
         }
       }
@@ -138,7 +138,7 @@ export const performanceTools = [
             severity: "MEDIUM",
             detail:
               "The preload script loads before the page content is visible. Too many imports in preload delay the first paint.",
-            fix: "Keep the preload minimal — only contextBridge setup and IPC wrappers. Move logic to the main process or renderer.",
+            fix: "Keep the preload minimal -- only contextBridge setup and IPC wrappers. Move logic to the main process or renderer.",
           });
         }
       }
@@ -173,7 +173,7 @@ export const performanceTools = [
       }
 
       if (findings.length === 0) {
-        return "# Performance Audit: CLEAN\n\nNo performance anti-patterns detected. Note: this is a static analysis — profile your app with Chrome DevTools (View > Toggle Developer Tools) for runtime performance data.";
+        return "# Performance Audit: CLEAN\n\nNo performance anti-patterns detected. Note: this is a static analysis -- profile your app with Chrome DevTools (View > Toggle Developer Tools) for runtime performance data.";
       }
 
       let report = `# Performance Audit: ${findings.length} FINDING(S)\n\n`;

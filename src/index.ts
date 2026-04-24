@@ -27,7 +27,7 @@ if (subcommand === "version" || subcommand === "--version") {
   process.exit(0);
 }
 
-// ─── No subcommand — start the MCP server ───
+// ─── No subcommand -- start the MCP server ───
 
 const allTools = [
   ...ipcTools,
@@ -39,7 +39,7 @@ const allTools = [
   ...knowledgeTools,
 ];
 
-// The knowledge-version tool IS the metadata — don't self-annotate it.
+// The knowledge-version tool IS the metadata -- don't self-annotate it.
 const FOOTER_EXEMPT = new Set(["electron_knowledge_version"]);
 
 const server = new McpServer({

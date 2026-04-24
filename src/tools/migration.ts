@@ -134,7 +134,15 @@ const breakingChanges: Record<number, Array<{ change: string; migration: string;
   ],
 };
 
-// Deprecated APIs by version they were deprecated
+// Deprecated APIs by version they were deprecated.
+//
+// Entries with `deprecated` < the migration tool's min (28) are intentional:
+// `electron_check_deprecated_apis` reports any match it finds in user code
+// regardless of the current Electron version, so a caller on v41 who still
+// uses `@electron/remote` (deprecated v14) or the `new-window` event
+// (deprecated v24) still gets flagged. The `electron_migrate_version` tool
+// filters by the v28..v41 range and ignores these older entries, which is
+// correct -- you can't migrate FROM v14.
 const deprecatedApis: Array<{ api: string; deprecated: number; removed?: number; replacement: string }> = [
   { api: "BrowserView", deprecated: 30, replacement: "WebContentsView + BaseWindow" },
   { api: "ipcRenderer.sendTo()", deprecated: 28, removed: 29, replacement: "MessagePort / MessageChannelMain" },
@@ -191,7 +199,7 @@ export const migrationTools = [
       }
 
       const sections: string[] = [];
-      sections.push(`# Electron Migration: v${input.currentVersion} → v${input.targetVersion}\n`);
+      sections.push(`# Electron Migration: v${input.currentVersion} -> v${input.targetVersion}\n`);
 
       let totalChanges = 0;
       let mediumOrHighChanges = 0;
@@ -232,10 +240,10 @@ export const migrationTools = [
       // Platform support changes
       const platformChanges: string[] = [];
       if (input.currentVersion < 33 && input.targetVersion >= 33) {
-        platformChanges.push("- macOS 10.15 (Catalina) support dropped in v33 — minimum is now macOS 11 (Big Sur)");
+        platformChanges.push("- macOS 10.15 (Catalina) support dropped in v33 -- minimum is now macOS 11 (Big Sur)");
       }
       if (input.currentVersion < 38 && input.targetVersion >= 38) {
-        platformChanges.push("- macOS 11 (Big Sur) support dropped in v38 — minimum is now macOS 12 (Monterey)");
+        platformChanges.push("- macOS 11 (Big Sur) support dropped in v38 -- minimum is now macOS 12 (Monterey)");
       }
 
       if (platformChanges.length > 0) {
@@ -243,8 +251,7 @@ export const migrationTools = [
       }
 
       // Summary
-      const defaultChanges = breakingChanges[input.currentVersion + 1] !== undefined || totalChanges > 0;
-      if (!defaultChanges && affectedDeprecations.length === 0 && platformChanges.length === 0) {
+      if (totalChanges === 0 && affectedDeprecations.length === 0 && platformChanges.length === 0) {
         sections.push(
           "No breaking changes recorded for this version range. Check the official Electron release notes for any unlisted changes.\n",
         );

@@ -223,7 +223,7 @@ window.${ns}.${camelName}(${hasArgs ? "args" : ""});`;
       // ── Security notes ──
       sections.push(`## Security Notes
 
-- The preload script wraps ipcRenderer methods in specific functions — never expose \`ipcRenderer\` directly
+- The preload script wraps ipcRenderer methods in specific functions -- never expose \`ipcRenderer\` directly
 - Channel name \`${input.channelName}\` is hardcoded in the preload, preventing injection of arbitrary channels
 - The contextBridge serializes all data via the structured clone algorithm (no functions, DOM nodes, or prototypes cross the boundary)
 - ${input.direction === "renderer-to-main" || input.direction === "bidirectional" ? "Consider validating `event.senderFrame.url` in the main process handler to restrict which pages can invoke this channel" : "Main-to-renderer messages should only be sent to trusted BrowserWindow instances"}`);
@@ -389,7 +389,7 @@ declare global {
         // OR a bare method reference like `{ send: ipcRenderer.send }` where `send`/`invoke`/`on` etc.
         // are passed as the exposed value directly (not as a call target inside a wrapping function).
         // `ipcRenderer.invoke('x')` inside a closure still won't match because `(` is not in the
-        // terminator set — only object/object-member terminators are.
+        // terminator set -- only object/object-member terminators are.
         const rawExposureRe =
           /contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer(?:\.(?:send|invoke|on|once|sendSync|postMessage|sendTo|sendToHost|removeListener|removeAllListeners))?\s*(?:[,}]|$)/;
         if (rawExposureRe.test(code)) {
@@ -405,7 +405,7 @@ declare global {
         // Check for ipcRenderer.on without cleanup
         if (/ipcRenderer\.on\s*\(/.test(code) && !/removeListener|removeAllListeners/.test(code)) {
           findings.push({
-            severity: "WARNING",
+            severity: "LOW",
             issue: "IPC listener without cleanup function",
             detail:
               "ipcRenderer.on() listeners persist across page navigations in SPAs. Without a cleanup mechanism, listeners accumulate and cause memory leaks.",
@@ -416,7 +416,7 @@ declare global {
         // Check for sendSync
         if (/ipcRenderer\.sendSync\s*\(/.test(code)) {
           findings.push({
-            severity: "WARNING",
+            severity: "LOW",
             issue: "Synchronous IPC (ipcRenderer.sendSync) detected",
             detail:
               "sendSync blocks the entire renderer process until the main process responds. This causes the UI to freeze and is almost never necessary since Electron 7 introduced ipcRenderer.invoke().",
@@ -493,18 +493,18 @@ declare global {
       }
 
       if (findings.length === 0) {
-        return "# IPC Security Audit: PASSED\n\nNo security issues detected in the provided code. Note: this is a static analysis — always review the full application context.";
+        return "# IPC Security Audit: PASSED\n\nNo security issues detected in the provided code. Note: this is a static analysis -- always review the full application context.";
       }
 
       const sorted = findings.sort((a, b) => {
-        const order: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, WARNING: 3 };
+        const order: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
         return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);
       });
 
       const critCount = sorted.filter((f) => f.severity === "CRITICAL").length;
       const highCount = sorted.filter((f) => f.severity === "HIGH").length;
 
-      let header = `# IPC Security Audit: ${critCount > 0 ? "FAIL" : highCount > 0 ? "NEEDS ATTENTION" : "WARNINGS"}\n\n`;
+      let header = `# IPC Security Audit: ${critCount > 0 ? "FAIL" : highCount > 0 ? "NEEDS ATTENTION" : "ISSUES FOUND"}\n\n`;
       header += `Found ${findings.length} issue(s): ${critCount} critical, ${highCount} high, ${findings.length - critCount - highCount} other\n`;
 
       const body = sorted
@@ -573,7 +573,8 @@ declare global {
           ];
           if (type === "modal") {
             opts.push("      modal: true,");
-            opts.push("      parent: this.windows.get('main') ?? undefined,");
+            // Parent is resolved at createWindow() time, not here -- configs is a
+            // static class field, so this.windows is still empty when it evaluates.
           }
           if (type === "panel") {
             opts.push("      alwaysOnTop: true,");
@@ -655,7 +656,6 @@ interface WindowConfig {
   width: number;
   height: number;
   modal?: boolean;
-  parent?: BrowserWindow;
   alwaysOnTop?: boolean;
   type?: string;
   webPreferences: {
@@ -686,7 +686,14 @@ ${stateCode}
       throw new Error(\`Unknown window: \${id}\`);
     }
 
-    const opts = { ...config };${stateRestore}
+    const opts: Electron.BrowserWindowConstructorOptions = { ...config };
+    // Modal windows need a live parent reference. configs is a static class
+    // field, so we can't bake the parent in there -- resolve it here, at the
+    // moment the modal is opened, from the current windows map.
+    if (config.modal && id !== "main") {
+      const parent = this.windows.get("main");
+      if (parent && !parent.isDestroyed()) opts.parent = parent;
+    }${stateRestore}
 
     const win = new BrowserWindow(opts);
     this.windows.set(id, win);
@@ -801,7 +808,15 @@ app.on("activate", () => {
         .describe("Target Electron version for version-specific guidance (e.g. '28', '33', '41'). Defaults to latest."),
     }),
     handler: async (input: { topic: string; electronVersion?: string }) => {
-      const ver = input.electronVersion ? Number.parseInt(input.electronVersion, 10) : KNOWLEDGE_VERSION.electronStable;
+      // Default to the embedded knowledge's stable version; guard against NaN
+      // from malformed input so version-gated guidance stays correct.
+      // Explicit `: number` — KNOWLEDGE_VERSION.electronStable is a literal
+      // (from `as const`), so without it TS narrows `ver` to that literal.
+      let ver: number = KNOWLEDGE_VERSION.electronStable;
+      if (input.electronVersion) {
+        const parsed = Number.parseInt(input.electronVersion, 10);
+        if (Number.isFinite(parsed)) ver = parsed;
+      }
 
       const explanations: Record<string, string> = {
         overview: `# Electron Process Model Overview
@@ -811,22 +826,22 @@ Electron apps run in multiple processes, similar to Chromium:
 \`\`\`
 ┌─────────────────────────────────────────────┐
 │                MAIN PROCESS                  │
-│  (Node.js — one per app)                    │
+│  (Node.js -- one per app)                    │
 │                                              │
-│  • App lifecycle (app module)               │
-│  • Creates BrowserWindows                   │
-│  • Native APIs (dialog, menu, tray, etc.)   │
-│  • IPC handler (ipcMain)                    │
-│  • File system, networking, databases       │
+│  * App lifecycle (app module)               │
+│  * Creates BrowserWindows                   │
+│  * Native APIs (dialog, menu, tray, etc.)   │
+│  * IPC handler (ipcMain)                    │
+│  * File system, networking, databases       │
 ├─────────────────────────────────────────────┤
 │         ▲ IPC (structured clone) ▼          │
 ├──────────────┬──────────────┬───────────────┤
 │  RENDERER 1  │  RENDERER 2  │  RENDERER N   │
 │  (Chromium)  │  (Chromium)  │  (Chromium)   │
 │              │              │               │
-│  • HTML/CSS  │  • HTML/CSS  │  • HTML/CSS   │
-│  • React/Vue │  • React/Vue │  • React/Vue  │
-│  • DOM APIs  │  • DOM APIs  │  • DOM APIs   │
+│  * HTML/CSS  │  * HTML/CSS  │  * HTML/CSS   │
+│  * React/Vue │  * React/Vue │  * React/Vue  │
+│  * DOM APIs  │  * DOM APIs  │  * DOM APIs   │
 │              │              │               │
 │  preload.js  │  preload.js  │  preload.js   │
 │  (bridge)    │  (bridge)    │  (bridge)     │
@@ -836,10 +851,10 @@ Electron apps run in multiple processes, similar to Chromium:
 ## Key Rules
 
 1. **Main process** = Node.js. Has full OS access. There is exactly one.
-2. **Renderer process** = Chromium tab. One per BrowserWindow. ${ver >= 20 ? "Sandboxed by default (Electron 20+)." : "Not sandboxed by default in your version — consider enabling it."}
-3. **Preload script** = Runs in the renderer but ${ver >= 12 ? "in an isolated context (contextIsolation, default since Electron 12)" : "shares the window context in your version — enable contextIsolation for security"}. It bridges main ↔ renderer via contextBridge.
+2. **Renderer process** = Chromium tab. One per BrowserWindow. ${ver >= 20 ? "Sandboxed by default (Electron 20+)." : "Not sandboxed by default in your version -- consider enabling it."}
+3. **Preload script** = Runs in the renderer but ${ver >= 12 ? "in an isolated context (contextIsolation, default since Electron 12)" : "shares the window context in your version -- enable contextIsolation for security"}. It bridges main <-> renderer via contextBridge.
 4. **IPC** = The ONLY way to communicate between processes. Data is serialized via structured clone (no functions, no DOM nodes, no class instances).
-5. **No shared memory** — processes cannot access each other's variables directly.`,
+5. **No shared memory** -- processes cannot access each other's variables directly.`,
 
         "main-process": `# Main Process
 
@@ -857,7 +872,7 @@ The main process is the entry point of your Electron app. It runs Node.js and ha
 ## What runs here
 
 \`\`\`typescript
-// main.ts — this is your main process
+// main.ts -- this is your main process
 import { app, BrowserWindow, ipcMain } from "electron";
 
 app.whenReady().then(() => {
@@ -885,7 +900,7 @@ ipcMain.handle("read-file", async (event, filePath: string) => {
 
         "renderer-process": `# Renderer Process
 
-Each BrowserWindow runs in its own renderer process — essentially a Chromium tab.
+Each BrowserWindow runs in its own renderer process -- essentially a Chromium tab.
 
 ## What it can do
 
@@ -904,13 +919,13 @@ Each BrowserWindow runs in its own renderer process — essentially a Chromium t
 ## How it accesses main process features
 
 \`\`\`typescript
-// In the renderer — uses the preload bridge, NOT electron imports
+// In the renderer -- uses the preload bridge, NOT electron imports
 const fileContent = await window.electronAPI.readFile("/path/to/file");
 \`\`\`
 
 ## Common mistakes
 
-- **Importing electron in the renderer**: \`import { ipcRenderer } from 'electron'\` requires nodeIntegration — a security risk. Use the preload bridge instead.
+- **Importing electron in the renderer**: \`import { ipcRenderer } from 'electron'\` requires nodeIntegration -- a security risk. Use the preload bridge instead.
 - **Thinking \`require\` works**: ${ver >= 20 ? "With sandbox enabled (default), require() is not available in the renderer." : "With sandbox enabled, require() is not available in the renderer."} Use a bundler (Vite, webpack).
 - **Heavy computation in the renderer**: Blocks the UI thread. Use Web Workers or offload to the main process / utility process.`,
 
@@ -922,10 +937,10 @@ The preload script is the bridge between main and renderer processes. It runs in
 
 ${ver >= 20 ? "With sandbox enabled (default since Electron 20):" : "With sandbox enabled:"}
 
-- \`contextBridge\` — expose APIs to the renderer
-- \`ipcRenderer\` — communicate with main process
-- \`webFrame\` — control rendering
-- \`webUtils\` — file path utilities
+- \`contextBridge\` -- expose APIs to the renderer
+- \`ipcRenderer\` -- communicate with main process
+- \`webFrame\` -- control rendering
+- \`webUtils\` -- file path utilities
 - Basic Node.js: \`Buffer\`, \`process\` (limited), \`clearImmediate\`, \`setImmediate\`, \`timers\`
 
 **NOT available** (with sandbox): \`require\`, \`fs\`, \`path\`, \`child_process\`, or any other Node.js module.
@@ -1025,17 +1040,17 @@ ${ver >= 20 ? "**Enabled by default since Electron 20.** Your version has this o
 
 The sandbox restricts the preload script to a limited set of APIs. It prevents preload from using:
 
-- \`require()\` — can't load arbitrary Node.js modules
-- \`fs\`, \`path\`, \`child_process\`, etc. — no direct file system or process access
-- \`module\`, \`__filename\`, \`__dirname\` — not available
+- \`require()\` -- can't load arbitrary Node.js modules
+- \`fs\`, \`path\`, \`child_process\`, etc. -- no direct file system or process access
+- \`module\`, \`__filename\`, \`__dirname\` -- not available
 
 ## What's still available in a sandboxed preload
 
-- \`contextBridge\` — expose APIs to renderer
-- \`ipcRenderer\` — communicate with main process
-- \`webFrame\` — control rendering
-- \`webUtils\` — file utilities
-- \`process\` — limited (versions, platform, env subset)
+- \`contextBridge\` -- expose APIs to renderer
+- \`ipcRenderer\` -- communicate with main process
+- \`webFrame\` -- control rendering
+- \`webUtils\` -- file utilities
+- \`process\` -- limited (versions, platform, env subset)
 - \`Buffer\`, timers
 
 ## How to work with it
@@ -1143,7 +1158,7 @@ process.parentPort.on("message", (e) => {
 
         "ipc-patterns": `# IPC Communication Patterns
 
-## Pattern 1: Renderer → Main (request/response) — RECOMMENDED
+## Pattern 1: Renderer -> Main (request/response) -- RECOMMENDED
 
 \`\`\`typescript
 // Main process
@@ -1160,7 +1175,7 @@ contextBridge.exposeInMainWorld("api", {
 const user = await window.api.getUser("123");
 \`\`\`
 
-## Pattern 2: Renderer → Main (fire-and-forget)
+## Pattern 2: Renderer -> Main (fire-and-forget)
 
 \`\`\`typescript
 // Main process
@@ -1177,7 +1192,7 @@ contextBridge.exposeInMainWorld("api", {
 window.api.logEvent("button-clicked");
 \`\`\`
 
-## Pattern 3: Main → Renderer (push)
+## Pattern 3: Main -> Renderer (push)
 
 \`\`\`typescript
 // Main process
@@ -1201,10 +1216,10 @@ const cleanup = window.api.onDataUpdated((data) => {
 // Call cleanup() when component unmounts
 \`\`\`
 
-## Pattern 4: Renderer ↔ Renderer (via MessagePort)
+## Pattern 4: Renderer <-> Renderer (via MessagePort)
 
 \`\`\`typescript
-// Main process — broker the connection
+// Main process -- broker the connection
 ipcMain.on("request-port", (event) => {
   const { port1, port2 } = new MessageChannelMain();
   // Send one port to each renderer

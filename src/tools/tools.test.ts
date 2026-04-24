@@ -30,9 +30,20 @@ const schemaOf = (name: string) => {
   return tool.inputSchema;
 };
 
+// Derive the expected tool count from the per-category arrays so adding a
+// tool only requires updating one place. Hard-coded counts drift silently.
+const EXPECTED_TOOL_COUNT =
+  ipcTools.length +
+  securityTools.length +
+  buildTools.length +
+  migrationTools.length +
+  performanceTools.length +
+  referenceTools.length +
+  knowledgeTools.length;
+
 describe("tool registration", () => {
-  it("exports 18 tools", () => {
-    assert.strictEqual(allTools.length, 18);
+  it("allTools contains every per-category tool (no duplicates, no drops)", () => {
+    assert.strictEqual(allTools.length, EXPECTED_TOOL_COUNT);
   });
 
   it("all tools have unique names", () => {
@@ -117,7 +128,7 @@ describe("electron_scaffold_ipc_channel", () => {
     assert.ok(match, "preload code block must be present");
     const preload = match[1];
     assert.ok(!/\{\s*\/\/[^\n]*\n\s*,/.test(preload), `preload has a leading comma in the object literal:\n${preload}`);
-    // The exposed object should open with a comment then the on* method — not a stray comma.
+    // The exposed object should open with a comment then the on* method -- not a stray comma.
     assert.ok(
       /\{\s*\/\/[^\n]*\n\s*onProgressUpdate:/.test(preload),
       "on* method must follow the description comment directly",
@@ -157,12 +168,14 @@ describe("electron_audit_ipc_security", () => {
     assert.ok(result.includes("ipcRenderer"));
   });
 
-  it("flags sendSync as a warning", async () => {
+  it("flags sendSync at LOW severity", async () => {
     const result = await tool({
       preloadCode: `const x = ipcRenderer.sendSync('channel')`,
     });
     assert.ok(result.includes("sendSync"));
-    assert.ok(result.includes("WARNING"));
+    // Severity taxonomy was unified to CRITICAL | HIGH | MEDIUM | LOW across
+    // every audit tool. sendSync and listener-without-cleanup are LOW.
+    assert.ok(result.includes("LOW"), `expected LOW severity, got:\n${result}`);
   });
 
   it("passes clean contextBridge usage", async () => {
@@ -215,6 +228,27 @@ describe("electron_generate_window_manager", () => {
     });
     assert.ok(result.includes("class WindowManager"));
     assert.ok(!result.includes("saveWindowState"));
+  });
+
+  it("modal parent is resolved at createWindow time, not in the static config", async () => {
+    // Regression: previously emitted `parent: this.windows.get('main') ?? undefined`
+    // inside the configs class-field initializer, which runs before any windows
+    // are created, so parent was always undefined and modal windows were never
+    // actually modal.
+    const result = await tool({
+      windows: [
+        { id: "main", title: "Main" },
+        { id: "settings", title: "Settings", type: "modal" },
+      ],
+    });
+    assert.ok(
+      !/parent:\s*this\.windows\.get\(['"]main['"]\)/.test(result),
+      "configs must not contain a static parent reference into this.windows",
+    );
+    assert.ok(
+      /if \(config\.modal[\s\S]*?this\.windows\.get\(['"]main['"]\)/.test(result),
+      "createWindow must resolve the modal parent at call time from the live windows map",
+    );
   });
 });
 
@@ -286,6 +320,26 @@ describe("electron_audit_security", () => {
       packageJson: `{ "devDependencies": { "electron": "^41.0.0" } }`,
     });
     assert.strictEqual(statusOf(currentVersion, 13), "PASS", `v41 should PASS, got:\n${currentVersion}`);
+  });
+
+  it("falls back to stable when electronVersion is unparseable", async () => {
+    // Regression: parseInt("abc") is NaN, and NaN < SUPPORTED_MIN is false, so
+    // the check silently passed with "Electron NaN is within the supported range".
+    const result = await tool({
+      packageJson: `{ "devDependencies": { "electron": "^41.0.0" } }`,
+      electronVersion: "not a number",
+    });
+    assert.ok(!/NaN/.test(result), `must never emit NaN in the audit; got:\n${result}`);
+    assert.strictEqual(statusOf(result, 13), "PASS", "unparseable input should fall back to stable and PASS");
+  });
+
+  it("detects http:// URLs in main-process loadURL calls", async () => {
+    // Regression: check #1 previously only scanned browserWindowConfig, but
+    // loadURL lives in main-process code, so the check almost never fired.
+    const result = await tool({
+      mainCode: `win.loadURL("http://example.com/app");`,
+    });
+    assert.strictEqual(statusOf(result, 1), "FAIL", `http:// in mainCode should FAIL #1, got:\n${result}`);
   });
 });
 
@@ -388,7 +442,7 @@ describe("electron_diagnose_build_error", () => {
 
   it("identifies macOS code signing identity errors", async () => {
     const result = await tool({
-      errorOutput: "Error: Code signing failed — no signing identity found for Developer ID Application",
+      errorOutput: "Error: Code signing failed -- no signing identity found for Developer ID Application",
       buildTool: "electron-builder",
       platform: "darwin",
     });
@@ -403,12 +457,32 @@ describe("electron_diagnose_build_error", () => {
     assert.ok(result.includes("Unrecognized") || result.includes("troubleshooting"));
   });
 
+  it("does not attribute a bare MODULE_NOT_FOUND to ASAR packaging", async () => {
+    // Regression: a generic "cannot find module 'foo'" from a missed devDep
+    // previously triggered the ASAR/extraResources diagnosis.
+    const result = await tool({
+      errorOutput: "Error: Cannot find module 'some-dev-dependency'\nMODULE_NOT_FOUND",
+    });
+    assert.ok(
+      !result.includes("Missing file or module in packaged app"),
+      `bare MODULE_NOT_FOUND must not be diagnosed as ASAR packaging; got:\n${result}`,
+    );
+  });
+
+  it("attributes MODULE_NOT_FOUND to packaging when the error names app.asar", async () => {
+    const result = await tool({
+      errorOutput:
+        "ENOENT: no such file or directory, open '/Applications/MyApp.app/Contents/Resources/app.asar/foo.js'",
+    });
+    assert.ok(result.includes("Missing file or module in packaged app"));
+  });
+
   it("suppresses macOS-specific diagnoses when platform is win32", async () => {
     // Regression: platform/buildTool inputs were previously silently ignored.
     // A Windows signing error should NOT produce a macOS notarization diagnosis.
     const errorOutput = [
       "Error: signtool.exe failed",
-      "errSecInternalComponent — signing identity not found",
+      "errSecInternalComponent -- signing identity not found",
       "notarytool: Apple notarization failed",
     ].join("\n");
     const winResult = await tool({
@@ -497,6 +571,18 @@ describe("electron_configure_deep_linking", () => {
     assert.ok(
       /import\s+\*\s+as\s+path\s+from\s+["']node:path["']/.test(mainCode),
       `generated deep-link code must import node:path, got:\n${mainCode}`,
+    );
+  });
+
+  it("shows the caller how to wire handleDeepLinkOnLaunch into app.whenReady", async () => {
+    // Regression: handleDeepLinkOnLaunch was exported by the scaffold but never
+    // appeared in the usage example, so cold-start deep links on Win/Linux were
+    // silently broken for anyone following the docs.
+    const result = await tool({ protocol: "myapp" });
+    assert.ok(/handleDeepLinkOnLaunch\(\)/.test(result), "must demonstrate calling handleDeepLinkOnLaunch()");
+    assert.ok(
+      /whenReady[\s\S]*handleDeepLinkOnLaunch/.test(result),
+      "call site must be shown inside the app.whenReady() block",
     );
   });
 });
@@ -652,10 +738,10 @@ describe("electron_knowledge_version", () => {
     assert.ok(result.includes("electronjs.org"), "must include official source URL");
   });
 
-  it("advertises the narrowed supported range (v28 – v41)", async () => {
+  it("advertises the narrowed supported range (v28 - v41)", async () => {
     const result = await tool({});
     assert.ok(
-      /v28\s*[–-]\s*v41/.test(result),
+      /v28\s*[--]\s*v41/.test(result),
       `supported range must cover exactly what breakingChanges covers; got:\n${result}`,
     );
   });

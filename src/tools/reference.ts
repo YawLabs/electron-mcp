@@ -6,17 +6,17 @@ const concepts: Record<string, string> = {
 Electron uses a multi-process architecture inherited from Chromium:
 
 ## Main Process
-- **One per app** — the entry point (your \`main.ts\` / \`main.js\`)
-- Runs **Node.js** — full access to file system, network, native APIs
+- **One per app** -- the entry point (your \`main.ts\` / \`main.js\`)
+- Runs **Node.js** -- full access to file system, network, native APIs
 - Creates and manages all BrowserWindows
 - Handles app lifecycle (\`app.whenReady()\`, \`app.quit()\`)
 - Provides native features: menus, dialogs, tray, notifications, global shortcuts
-- **Never put heavy computation here** — it blocks ALL windows
+- **Never put heavy computation here** -- it blocks ALL windows
 
 ## Renderer Process
-- **One per BrowserWindow** — essentially a Chromium tab
+- **One per BrowserWindow** -- essentially a Chromium tab
 - Runs your web app (HTML/CSS/JS, React/Vue/etc.)
-- Sandboxed by default (since Electron 20) — no Node.js access
+- Sandboxed by default (since Electron 20) -- no Node.js access
 - Communicates with main process ONLY through IPC via the preload bridge
 
 ## Preload Script
@@ -24,7 +24,7 @@ Electron uses a multi-process architecture inherited from Chromium:
 - The **bridge** between main and renderer
 - Uses \`contextBridge.exposeInMainWorld()\` to safely expose APIs
 - Runs in an isolated JavaScript context (since Electron 12)
-- Should be minimal — only IPC wrappers and contextBridge setup
+- Should be minimal -- only IPC wrappers and contextBridge setup
 
 ## Utility Process (since Electron 22)
 - Child process spawned by main for heavy work
@@ -35,9 +35,9 @@ Electron uses a multi-process architecture inherited from Chromium:
 
 ## Communication
 \`\`\`
-Renderer ←→ Preload (contextBridge) ←→ Main (IPC)
-Main → Utility (MessagePort)
-Renderer ↔ Renderer (via Main broker or MessagePort)
+Renderer <--> Preload (contextBridge) <--> Main (IPC)
+Main -> Utility (MessagePort)
+Renderer <-> Renderer (via Main broker or MessagePort)
 \`\`\``,
 
   "context-isolation": `# Context Isolation
@@ -49,17 +49,17 @@ Context isolation creates a separate JavaScript world for the preload script, pr
 ## Without context isolation (INSECURE)
 \`\`\`
 Preload and page share the same 'window' object
-→ Page can override preload functions
-→ Page can access ipcRenderer directly
-→ XSS in the page = full app compromise
+-> Page can override preload functions
+-> Page can access ipcRenderer directly
+-> XSS in the page = full app compromise
 \`\`\`
 
 ## With context isolation (SECURE)
 \`\`\`
-Preload 'window' ≠ Page 'window'
-→ Only contextBridge.exposeInMainWorld() can cross the boundary
-→ Data is serialized (structured clone) — no prototype access
-→ XSS in the page can only access the exposed API surface
+Preload 'window' != Page 'window'
+-> Only contextBridge.exposeInMainWorld() can cross the boundary
+-> Data is serialized (structured clone) -- no prototype access
+-> XSS in the page can only access the exposed API surface
 \`\`\`
 
 ## Key rule
@@ -82,7 +82,7 @@ Use when: Native modules in preload, legacy code that needs require()
 ## Important: Bundling preload
 Since sandboxed preload can't use require(), you need a bundler:
 - electron-vite handles this automatically
-- With webpack/esbuild, compile preload.ts → preload.js with electron as external`,
+- With webpack/esbuild, compile preload.ts -> preload.js with electron as external`,
 
   ipc: `# IPC (Inter-Process Communication)
 
@@ -90,19 +90,19 @@ IPC is the ONLY way to communicate between Electron processes. All data is seria
 
 ## The 4 patterns
 
-### 1. Renderer → Main (request/response) — RECOMMENDED
-\`ipcRenderer.invoke(channel, ...args)\` → \`ipcMain.handle(channel, handler)\`
+### 1. Renderer -> Main (request/response) -- RECOMMENDED
+\`ipcRenderer.invoke(channel, ...args)\` -> \`ipcMain.handle(channel, handler)\`
 Returns a Promise. Use for most renderer-to-main communication.
 
-### 2. Renderer → Main (fire-and-forget)
-\`ipcRenderer.send(channel, ...args)\` → \`ipcMain.on(channel, handler)\`
+### 2. Renderer -> Main (fire-and-forget)
+\`ipcRenderer.send(channel, ...args)\` -> \`ipcMain.on(channel, handler)\`
 No response. Use for logging, analytics, non-critical notifications.
 
-### 3. Main → Renderer (push)
-\`webContents.send(channel, ...args)\` → \`ipcRenderer.on(channel, handler)\`
+### 3. Main -> Renderer (push)
+\`webContents.send(channel, ...args)\` -> \`ipcRenderer.on(channel, handler)\`
 Main pushes data to renderer. Use for state updates, notifications.
 
-### 4. Renderer ↔ Renderer
+### 4. Renderer <-> Renderer
 No direct IPC. Route through main, or use MessagePort/BroadcastChannel.
 
 ## Serialization rules
@@ -124,14 +124,14 @@ ASAR (Atom Shell Archive) is Electron's archive format for packaging app files.
 - Bundles all app files into a single \`app.asar\` file
 - Faster file reads (no directory traversal)
 - Prevents casual source code access
-- NOT encryption — determined users can extract it
+- NOT encryption -- determined users can extract it
 
 ## Common issues
 
 ### __dirname resolves inside the ASAR
 \`\`\`typescript
 // In development: /path/to/project/src
-// In production: /path/to/app.asar/src  ← can't write here!
+// In production: /path/to/app.asar/src  <- can't write here!
 
 // Fix: use app paths for writable locations
 const dataDir = app.getPath("userData"); // Writable
@@ -193,8 +193,8 @@ Or use the Electron Forge FusesPlugin for automation.`,
 ## macOS
 1. **Developer ID certificate** from Apple Developer Program ($99/year)
 2. **Code sign** the app with the certificate
-3. **Notarize** — upload to Apple for automated review (required since macOS 10.15)
-4. **Staple** — attach the notarization ticket to the app
+3. **Notarize** -- upload to Apple for automated review (required since macOS 10.15)
+4. **Staple** -- attach the notarization ticket to the app
 
 \`\`\`json
 // electron-builder config
@@ -221,14 +221,14 @@ Store certificates as base64-encoded secrets. Import into a temporary keychain (
   "electron-forge-vs-electron-builder": `# Electron Forge vs electron-builder
 
 ## Electron Forge
-- **Official** — maintained by the Electron team
+- **Official** -- maintained by the Electron team
 - Uses first-party packages (@electron/packager, @electron/rebuild, etc.)
 - Plugin system (Vite, webpack, fuses, auto-update publishers)
 - \`npm init electron-app@latest\` scaffolding
 - Better for: new projects, projects that want official support
 
 ## electron-builder
-- **Community** — mature, widely used
+- **Community** -- mature, widely used
 - Rewrites build logic in-house (doesn't use @electron/packager)
 - More platform targets (NSIS, AppX, DMG, snap, flatpak, AppImage, etc.)
 - More auto-update providers (GitHub, S3, generic, spaces, etc.)
@@ -236,7 +236,7 @@ Store certificates as base64-encoded secrets. Import into a temporary keychain (
 - Better for: complex build requirements, many target formats
 
 ## electron-vite
-- **Vite-focused** — fast development with HMR
+- **Vite-focused** -- fast development with HMR
 - Uses electron-builder under the hood for packaging
 - First-class TypeScript and framework support
 - Separate Vite configs for main/preload/renderer

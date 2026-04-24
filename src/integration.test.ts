@@ -2,7 +2,7 @@
  * End-to-end test: spawn the built binary as a subprocess, connect through
  * the MCP SDK client over stdio, and exercise the real JSON-RPC surface.
  *
- * This catches everything the handler-level unit tests can't — JSON-RPC
+ * This catches everything the handler-level unit tests can't -- JSON-RPC
  * framing, tool registration, the wrapping layer in src/index.ts, the
  * knowledge-footer injection, and the version subcommand.
  */
@@ -12,9 +12,27 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { buildTools } from "./tools/build.js";
+import { ipcTools } from "./tools/ipc.js";
+import { knowledgeTools } from "./tools/knowledge.js";
+import { migrationTools } from "./tools/migration.js";
+import { performanceTools } from "./tools/performance.js";
+import { referenceTools } from "./tools/reference.js";
+import { securityTools } from "./tools/security.js";
 
 // dist/index.js lives next to this test file (both emitted to dist/)
 const serverPath = fileURLToPath(new URL("./index.js", import.meta.url));
+
+// Compare against the sum of per-category arrays instead of a magic number
+// so that adding a tool in one place doesn't require updating the test.
+const EXPECTED_TOOL_COUNT =
+  ipcTools.length +
+  securityTools.length +
+  buildTools.length +
+  migrationTools.length +
+  performanceTools.length +
+  referenceTools.length +
+  knowledgeTools.length;
 
 async function connect(): Promise<{ client: Client; close: () => Promise<void> }> {
   const transport = new StdioClientTransport({
@@ -27,11 +45,15 @@ async function connect(): Promise<{ client: Client; close: () => Promise<void> }
 }
 
 describe("integration: stdio MCP server", () => {
-  it("exposes all 18 tools through tools/list", async () => {
+  it("exposes every registered tool through tools/list", async () => {
     const { client, close } = await connect();
     try {
       const res = await client.listTools();
-      assert.strictEqual(res.tools.length, 18, `expected 18 tools, got ${res.tools.length}`);
+      assert.strictEqual(
+        res.tools.length,
+        EXPECTED_TOOL_COUNT,
+        `expected ${EXPECTED_TOOL_COUNT} tools, got ${res.tools.length}`,
+      );
       const names = res.tools.map((t) => t.name);
       assert.ok(
         names.every((n) => n.startsWith("electron_")),

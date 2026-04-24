@@ -25,6 +25,11 @@ export const securityTools = [
         .max(500_000)
         .optional()
         .describe("BrowserWindow constructor options as a JSON string or code snippet"),
+      mainCode: z
+        .string()
+        .max(500_000)
+        .optional()
+        .describe("Main process code -- used to detect non-HTTPS URLs in loadURL/loadFile calls"),
       packageJson: z
         .string()
         .max(500_000)
@@ -40,6 +45,7 @@ export const securityTools = [
     }),
     handler: async (input: {
       browserWindowConfig?: string;
+      mainCode?: string;
       packageJson?: string;
       preloadCode?: string;
       htmlContent?: string;
@@ -47,29 +53,36 @@ export const securityTools = [
     }) => {
       const checks: Array<{ id: number; name: string; status: string; detail: string }> = [];
       const bwConfig = input.browserWindowConfig || "";
+      const mainCode = input.mainCode || "";
       const pkgJson = input.packageJson || "";
       const preload = input.preloadCode || "";
       const html = input.htmlContent || "";
 
       // Default assumes latest supported stable; overridden by explicit input
-      // or extracted from package.json.
+      // or extracted from package.json. Guard against NaN from malformed input.
       let ver: number = KNOWLEDGE_VERSION.electronStable;
       if (input.electronVersion) {
-        ver = Number.parseInt(input.electronVersion, 10);
+        const parsed = Number.parseInt(input.electronVersion, 10);
+        if (Number.isFinite(parsed)) ver = parsed;
       } else if (pkgJson) {
         const match = pkgJson.match(/"electron"\s*:\s*"[^"]*?(\d+)/);
-        if (match) ver = Number.parseInt(match[1], 10);
+        if (match) {
+          const parsed = Number.parseInt(match[1], 10);
+          if (Number.isFinite(parsed)) ver = parsed;
+        }
       }
 
-      // 1. HTTPS content
-      if (bwConfig) {
-        const hasHttp = /http:\/\/(?!localhost|127\.0\.0\.1)/.test(bwConfig);
+      // 1. HTTPS content -- URLs land in loadURL/loadFile calls, not in the
+      // BrowserWindow constructor options. Scan whichever code inputs we have.
+      const urlCarryingCode = [bwConfig, mainCode, preload, html].filter(Boolean).join("\n");
+      if (urlCarryingCode) {
+        const hasHttp = /http:\/\/(?!localhost|127\.0\.0\.1)/.test(urlCarryingCode);
         checks.push({
           id: 1,
           name: "Only load secure content (HTTPS)",
           status: hasHttp ? "FAIL" : "PASS",
           detail: hasHttp
-            ? "Found non-HTTPS URLs in BrowserWindow config. Remote content should be loaded over HTTPS."
+            ? "Found non-HTTPS URLs in the provided code. Remote content should be loaded over HTTPS."
             : "No insecure HTTP URLs detected.",
         });
       }
@@ -82,7 +95,7 @@ export const securityTools = [
           name: "Do not enable nodeIntegration",
           status: nodeInt ? "FAIL" : "PASS",
           detail: nodeInt
-            ? `CRITICAL: nodeIntegration is enabled. This gives the renderer full Node.js access — any XSS becomes full RCE. Default is false since Electron 5.${ver >= 5 ? " You can simply remove this line." : ""}`
+            ? `CRITICAL: nodeIntegration is enabled. This gives the renderer full Node.js access -- any XSS becomes full RCE. Default is false since Electron 5.${ver >= 5 ? " You can simply remove this line." : ""}`
             : `nodeIntegration is not enabled.${ver >= 5 ? " (default: false)" : ""}`,
         });
       }
@@ -128,7 +141,7 @@ export const securityTools = [
 
       // 6. CSP
       if (html) {
-        const hasCSP = /content-security-policy/i.test(html) || /Content-Security-Policy/.test(html);
+        const hasCSP = /content-security-policy/i.test(html);
         const hasUnsafeInline = /unsafe-inline/.test(html);
         const hasUnsafeEval = /unsafe-eval/.test(html);
         // Collect every unsafe directive present so the status reflects ALL
@@ -158,7 +171,7 @@ export const securityTools = [
           name: "Do not enable allowRunningInsecureContent",
           status: insecure ? "FAIL" : "PASS",
           detail: insecure
-            ? "allowRunningInsecureContent is enabled. This allows HTTPS pages to load scripts from HTTP — a downgrade attack vector."
+            ? "allowRunningInsecureContent is enabled. This allows HTTPS pages to load scripts from HTTP -- a downgrade attack vector."
             : "allowRunningInsecureContent is not enabled.",
         });
       }
@@ -171,7 +184,7 @@ export const securityTools = [
           name: "Do not enable experimental Chromium features",
           status: exp ? "WARN" : "PASS",
           detail: exp
-            ? "experimentalFeatures is enabled. These features may have security bugs — disable in production."
+            ? "experimentalFeatures is enabled. These features may have security bugs -- disable in production."
             : "Experimental features are not enabled.",
         });
       }
@@ -193,7 +206,7 @@ export const securityTools = [
       if (preload) {
         // Match ipcRenderer as a bare value (`{ ipcRenderer }`, `{ x: ipcRenderer }`)
         // or as a bare method reference (`{ send: ipcRenderer.send }`). The `[^}]*`
-        // form of the previous regex broke on nested braces — this bounded pattern
+        // form of the previous regex broke on nested braces -- this bounded pattern
         // relies on a terminator character instead. Mirrors the regex in
         // electron_audit_ipc_security so both tools agree on what counts as raw
         // exposure.
@@ -232,7 +245,7 @@ export const securityTools = [
         }
       }
 
-      // 13. Electron version check — Electron supports the current stable +
+      // 13. Electron version check -- Electron supports the current stable +
       // previous two majors. Derive the window from the embedded knowledge
       // vintage instead of hardcoding so this stays accurate after a bump.
       if (pkgJson) {
@@ -254,7 +267,7 @@ export const securityTools = [
       }
 
       if (checks.length === 0) {
-        return "Please provide at least one of: browserWindowConfig, packageJson, preloadCode, or htmlContent to audit.";
+        return "Please provide at least one of: browserWindowConfig, mainCode, packageJson, preloadCode, or htmlContent to audit.";
       }
 
       const passed = checks.filter((c) => c.status === "PASS").length;
@@ -421,14 +434,14 @@ await flipFuses(
       const explanations = [
         "| Fuse | Value | Effect |",
         "|------|-------|--------|",
-        `| RunAsNode | ${fuses.runAsNode} | ${fuses.runAsNode ? "ELECTRON_RUN_AS_NODE env var is allowed — app can be used as a Node.js runtime" : "Blocks ELECTRON_RUN_AS_NODE — prevents hijacking your app binary as a Node.js runtime"} |`,
+        `| RunAsNode | ${fuses.runAsNode} | ${fuses.runAsNode ? "ELECTRON_RUN_AS_NODE env var is allowed -- app can be used as a Node.js runtime" : "Blocks ELECTRON_RUN_AS_NODE -- prevents hijacking your app binary as a Node.js runtime"} |`,
         `| CookieEncryption | ${fuses.cookieEncryption} | ${fuses.cookieEncryption ? "Cookies encrypted at rest using OS keychain" : "Cookies stored in plaintext"} |`,
-        `| NodeOptions | ${fuses.nodeOptions} | ${fuses.nodeOptions ? "NODE_OPTIONS env var is allowed — could inject code via --require" : "Blocks NODE_OPTIONS — prevents code injection via environment"} |`,
-        `| NodeCliInspect | ${fuses.nodeCliInspect} | ${fuses.nodeCliInspect ? "--inspect flag is allowed — enables remote debugging" : "Blocks --inspect — prevents remote debugging in production"} |`,
+        `| NodeOptions | ${fuses.nodeOptions} | ${fuses.nodeOptions ? "NODE_OPTIONS env var is allowed -- could inject code via --require" : "Blocks NODE_OPTIONS -- prevents code injection via environment"} |`,
+        `| NodeCliInspect | ${fuses.nodeCliInspect} | ${fuses.nodeCliInspect ? "--inspect flag is allowed -- enables remote debugging" : "Blocks --inspect -- prevents remote debugging in production"} |`,
         `| EmbeddedAsarIntegrity | ${fuses.embeddedAsarIntegrity} | ${fuses.embeddedAsarIntegrity ? "ASAR archive integrity is validated at runtime" : "No ASAR integrity validation"} |`,
-        `| OnlyLoadAppFromAsar | ${fuses.onlyLoadAppFromAsar} | ${fuses.onlyLoadAppFromAsar ? "App can only be loaded from ASAR — prevents side-loading code" : "App can be loaded from loose files"} |`,
+        `| OnlyLoadAppFromAsar | ${fuses.onlyLoadAppFromAsar} | ${fuses.onlyLoadAppFromAsar ? "App can only be loaded from ASAR -- prevents side-loading code" : "App can be loaded from loose files"} |`,
         `| LoadBrowserProcessSpecificV8Snapshot | ${fuses.loadBrowserProcessSpecificV8Snapshot} | ${fuses.loadBrowserProcessSpecificV8Snapshot ? "Uses browser-specific V8 snapshot" : "Uses standard V8 snapshot"} |`,
-        `| GrantFileProtocolExtraPrivileges | ${fuses.grantFileProtocolExtraPrivileges} | ${fuses.grantFileProtocolExtraPrivileges ? "file:// protocol has extra privileges (fetch, service workers, etc.)" : "file:// protocol has restricted privileges — more secure"} |`,
+        `| GrantFileProtocolExtraPrivileges | ${fuses.grantFileProtocolExtraPrivileges} | ${fuses.grantFileProtocolExtraPrivileges ? "file:// protocol has extra privileges (fetch, service workers, etc.)" : "file:// protocol has restricted privileges -- more secure"} |`,
       ];
 
       const install = `## Installation
@@ -441,7 +454,7 @@ npm install --save-dev @electron-forge/plugin-fuses @electron/fuses
 npm install --save-dev @electron/fuses
 \`\`\``;
 
-      return `# Electron Fuses Configuration (${input.level})\n\n${explanations.join("\n")}\n\n${install}\n\n## Electron Forge Integration\n\n\`\`\`typescript\n${code}\n\`\`\`\n\n## Standalone Usage\n\n\`\`\`typescript\n${standalone}\n\`\`\`\n\n## Important Notes\n\n- Fuses are flipped at **package time**, not runtime. They modify the Electron binary itself.\n- Once a fuse is flipped, end users cannot change it back.\n- Always test your packaged app after flipping fuses — some functionality may break if your app depends on disabled features.\n- Use \`npx @electron/fuses read --app /path/to/app\` to verify fuse state in a packaged build.`;
+      return `# Electron Fuses Configuration (${input.level})\n\n${explanations.join("\n")}\n\n${install}\n\n## Electron Forge Integration\n\n\`\`\`typescript\n${code}\n\`\`\`\n\n## Standalone Usage\n\n\`\`\`typescript\n${standalone}\n\`\`\`\n\n## Important Notes\n\n- Fuses are flipped at **package time**, not runtime. They modify the Electron binary itself.\n- Once a fuse is flipped, end users cannot change it back.\n- Always test your packaged app after flipping fuses -- some functionality may break if your app depends on disabled features.\n- Use \`npx @electron/fuses read --app /path/to/app\` to verify fuse state in a packaged build.`;
     },
   },
 
@@ -548,7 +561,7 @@ npm install --save-dev @electron/fuses
       const metaTag = `<!-- index.html -->
 <meta http-equiv="Content-Security-Policy" content="${prodCSP}">`;
 
-      const sessionCode = `// main process — set CSP via session headers (recommended)
+      const sessionCode = `// main process -- set CSP via session headers (recommended)
 import { session } from "electron";
 
 const isDev = !app.isPackaged;
@@ -717,7 +730,7 @@ app.whenReady().then(() => {
       }
 
       if (findings.length === 0) {
-        return `# Security Lint: CLEAN\n\nNo security issues detected in ${fileType} process code.\n\nNote: This is a static pattern analysis. It cannot detect all security issues — always review the full application context and follow Electron's security checklist.`;
+        return `# Security Lint: CLEAN\n\nNo security issues detected in ${fileType} process code.\n\nNote: This is a static pattern analysis. It cannot detect all security issues -- always review the full application context and follow Electron's security checklist.`;
       }
 
       const sorted = findings.sort((a, b) => {
