@@ -3,18 +3,19 @@
 # Release Script -- Build, tag, publish to npm, create GitHub release
 # =============================================================================
 # Usage:
-#   ./release.sh <new-version>    # e.g. ./release.sh 1.2.0
+#   ./release.sh <new-version>    -- full release from local machine
+#   ./release.sh                  -- CI mode (derives version from git tag)
 #
 # If interrupted, re-run with the same version -- each step is idempotent.
 #
 # Prerequisites:
 #   - Node.js 18+ and npm installed
-#   - npm authenticated (`npm whoami`) -- run `npm login --auth-type=web` first
-#   - gh CLI authenticated (`gh auth status`)
+#   - npm authenticated (npm whoami) or NODE_AUTH_TOKEN set
+#   - gh CLI authenticated (or GITHUB_TOKEN set)
 # =============================================================================
 
 set -euo pipefail
-trap 'echo -e "\n\033[0;31m  ✗ Release failed at line $LINENO (exit code $?)\033[0m"' ERR
+trap 'echo -e "\n\033[0;31m  x Release failed at line $LINENO (exit code $?)\033[0m"' ERR
 
 # ---- Helpers ----
 RED='\033[0;31m'
@@ -24,19 +25,25 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 step() { echo -e "\n${CYAN}=== [$1/$TOTAL_STEPS] $2 ===${NC}"; }
-info() { echo -e "${GREEN}  ✓ $1${NC}"; }
+info() { echo -e "${GREEN}  + $1${NC}"; }
 warn() { echo -e "${YELLOW}  ! $1${NC}"; }
-fail() { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
+fail() { echo -e "${RED}  x $1${NC}"; exit 1; }
 
 TOTAL_STEPS=7
 
 # ---- Resolve version ----
 VERSION="${1:-}"
+IS_CI="${CI:-false}"
 
 if [ -z "$VERSION" ]; then
-  echo "Usage: ./release.sh <version>"
-  echo "  e.g. ./release.sh 1.2.0"
-  exit 1
+  if [ "$IS_CI" = "true" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
+    VERSION="${GITHUB_REF_NAME#v}"
+    info "CI mode -- version $VERSION from tag $GITHUB_REF_NAME"
+  else
+    echo "Usage: ./release.sh <version>"
+    echo "  e.g. ./release.sh 1.2.0"
+    exit 1
+  fi
 fi
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -59,13 +66,15 @@ if [ "$CURRENT_VERSION" = "$VERSION" ]; then
   RESUMING=true
   info "Already at v${VERSION} -- resuming"
 else
-  if [ -n "$(git status --porcelain)" ]; then
-    fail "Working directory not clean. Commit or stash changes first."
+  if [ "$IS_CI" != "true" ]; then
+    if [ -n "$(git status --porcelain)" ]; then
+      fail "Working directory not clean. Commit or stash changes first."
+    fi
   fi
   info "Current: v${CURRENT_VERSION} -> v${VERSION}"
 fi
 
-if [ "$RESUMING" != "true" ]; then
+if [ "$IS_CI" != "true" ] && [ "$RESUMING" != "true" ]; then
   echo ""
   echo -e "${YELLOW}About to release v${VERSION}. This will:${NC}"
   echo "  1. Run lint + tests"
@@ -118,26 +127,30 @@ fi
 # =============================================================================
 step 4 "Commit, tag, and push"
 
-if [ -n "$(git status --porcelain package.json package-lock.json 2>/dev/null)" ]; then
-  git add package.json package-lock.json
-  git commit -m "v${VERSION}"
-  info "Committed version bump"
+if [ "$IS_CI" = "true" ]; then
+  info "CI mode -- skipping commit/tag/push (already tagged)"
 else
-  info "Nothing to commit"
-fi
+  if [ -n "$(git status --porcelain package.json package-lock.json 2>/dev/null)" ]; then
+    git add package.json package-lock.json
+    git commit -m "v${VERSION}"
+    info "Committed version bump"
+  else
+    info "Nothing to commit"
+  fi
 
-if git tag -l "v${VERSION}" | grep -q "v${VERSION}"; then
-  info "Tag v${VERSION} already exists"
-else
-  git tag "v${VERSION}"
-  info "Tag v${VERSION} created"
-fi
+  if git tag -l "v${VERSION}" | grep -q "v${VERSION}"; then
+    info "Tag v${VERSION} already exists"
+  else
+    git tag "v${VERSION}"
+    info "Tag v${VERSION} created"
+  fi
 
-# Push main + the tag. --follow-tags only pushes annotated tags, so push the
-# tag explicitly to cover lightweight tags too.
-git push origin main
-git push origin "v${VERSION}"
-info "Pushed to origin"
+  # Push main + the tag. --follow-tags only pushes annotated tags, so push the
+  # tag explicitly to cover lightweight tags too.
+  git push origin main
+  git push origin "v${VERSION}"
+  info "Pushed to origin"
+fi
 
 # =============================================================================
 # Step 5: Publish to npm
@@ -149,7 +162,11 @@ PUBLISHED_VERSION=$(npm view @yawlabs/electron-mcp version 2>/dev/null || echo "
 if [ "$PUBLISHED_VERSION" = "$VERSION" ]; then
   info "v${VERSION} already published on npm -- skipping"
 else
-  npm publish --access public
+  if [ "$IS_CI" = "true" ]; then
+    npm publish --access public --provenance
+  else
+    npm publish --access public
+  fi
   info "Published @yawlabs/electron-mcp@${VERSION} to npm"
 fi
 

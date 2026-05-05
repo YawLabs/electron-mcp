@@ -32,6 +32,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Inputs to `electron_audit_security`, `electron_audit_ipc_security`, `electron_audit_performance`, and `electron_lint_security` are run through `stripComments` (preserving string contents) before pattern matching. Checks that should ignore string content too (eval, innerHTML) additionally use `stripCommentsAndStrings`.
 - Integration test for the validation-error path is now SDK-version-tolerant. It accepts any of the field name, the offending value, or the words `invalid`/`validation`/`expected` -- so a minor SDK formatting change won't break the test even though the assertion still proves the error is actionable.
 
+### Infrastructure
+
+- Restored CI release workflow (`.github/workflows/release.yml`) that fires on `v*` tags and publishes via the org-level `NPM_TOKEN` secret with `--provenance`. Local `release.sh <version>` still works for direct releases; the script is now dual-mode (CI vs local) so the same code path runs in both. The 1.1.1 entry below explains why CI was removed; experience showed the local-only path runs into npm WebAuthn-session expiry on every release, which CI publishing avoids entirely.
+- Added `.github/workflows/ci.yml` for build + lint + test on every push and pull request to main. Matrix covers Node 18 / 20 / 22.
+
 ## [1.1.1] - 2026-04-24
 
 ### Infrastructure
