@@ -57,8 +57,17 @@ for (const tool of allTools) {
     async (input: Record<string, unknown>) => {
       try {
         const result = await (tool.handler as (input: unknown) => Promise<unknown>)(input);
-        const raw = typeof result === "string" ? result : JSON.stringify(result, null, 2);
-        const text = FOOTER_EXEMPT.has(tool.name) ? raw : raw + knowledgeFooter();
+        // The knowledge footer is markdown text and is only safe to append
+        // to string returns -- appending it to a JSON-stringified payload
+        // would corrupt the structure. Tools that return non-string values
+        // are exempted automatically; tools that return strings but should
+        // skip the footer (the metadata tool itself) opt out via
+        // FOOTER_EXEMPT. All current tools return strings; this guard is
+        // here so a future structured-return tool doesn't ship a broken
+        // payload.
+        const isString = typeof result === "string";
+        const raw = isString ? result : JSON.stringify(result, null, 2);
+        const text = isString && !FOOTER_EXEMPT.has(tool.name) ? raw + knowledgeFooter() : raw;
         return {
           content: [{ type: "text" as const, text }],
         };

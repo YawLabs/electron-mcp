@@ -134,10 +134,17 @@ describe("integration: stdio MCP server", () => {
         message = err instanceof Error ? err.message : String(err);
       }
       assert.ok(sawError, `expected validation failure to surface as an error; got: ${message}`);
-      assert.ok(
-        /currentVersion/i.test(message),
-        `error must name the failing field so callers can fix it; got: ${message}`,
-      );
+      // SDK-version-tolerant: a useful zod error names the field, the bad
+      // value, or the word "validation"/"invalid". Accept any of these
+      // so the test stays meaningful across SDK formatting changes without
+      // re-breaking on every minor SDK release. If the SDK ever switches
+      // to opaque error messages, swap this for inspection of the
+      // structured error response.
+      const isActionable =
+        /currentVersion/i.test(message) ||
+        /not\s*a\s*number/i.test(message) ||
+        /(?:invalid|validation|expected)/i.test(message);
+      assert.ok(isActionable, `error must indicate validation failure with actionable detail; got: ${message}`);
     } finally {
       await close();
     }

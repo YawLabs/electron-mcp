@@ -182,9 +182,14 @@ const dataDir = app.getPath("userData"); // Writable
 
       // Missing resources -- require a packaging-specific signal so we don't
       // attribute a generic "npm install missed a devDep" MODULE_NOT_FOUND to
-      // ASAR/extraResources.
+      // ASAR/extraResources. Signals cover macOS bundles (`.app/Contents`),
+      // Linux/dev paths (`app.asar`, `resourcesPath`), Windows installer
+      // paths (`AppData\Local`, `Program Files`, NSIS-style `app-X.Y.Z`),
+      // and Squirrel-packaged Windows builds.
       const looksLikePackagingIssue =
-        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents/i.test(output);
+        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents|\\AppData\\Local\\|[\\/]Program Files[\\/]|[\\/]app-\d+\.\d+\.\d+[\\/]|squirrel/i.test(
+          output,
+        );
       if (
         looksLikePackagingIssue &&
         /ENOENT|file\s*not\s*found|cannot\s*find\s*module|MODULE_NOT_FOUND/i.test(output)
@@ -580,7 +585,20 @@ export function handleDeepLink(url: string): void {
     const parsed = new URL(url);
     if (parsed.protocol !== \`\${PROTOCOL}:\`) return;
 
-    const path = parsed.pathname || parsed.host; // Handle both myapp://path and myapp:path
+    // myapp://settings           -> host="settings", pathname=""
+    // myapp://settings/sub       -> host="settings", pathname="/sub"
+    // myapp:settings             -> host="",         pathname="settings"
+    // myapp:/settings            -> host="",         pathname="/settings"
+    //
+    // Normalize all four into a single leading-slash path so route matching
+    // is consistent regardless of how the OS handed the URL to us.
+    const rawPath = parsed.pathname || "";
+    const host = parsed.host || "";
+    const path = host
+      ? \`/\${host}\${rawPath}\`
+      : rawPath.startsWith("/")
+        ? rawPath
+        : \`/\${rawPath}\`;
     const params = Object.fromEntries(parsed.searchParams);
 
     console.log(\`Deep link: path=\${path}, params=\${JSON.stringify(params)}\`);

@@ -4,6 +4,34 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `electron_audit_ipc_security` and `electron_lint_security` no longer flag `shell.openExternal("https://example.com")` as unvalidated. The previous heuristic was `!/^https?:\/\//.test(code)` which anchored to start-of-string and so never matched real source -- every call site was reported. Both tools now examine each `shell.openExternal(arg)` call individually and treat it as safe iff the first argument is a complete `https://` string literal.
+- `electron_lint_security` `shell.openExternal` validation no longer false-negatives when an unrelated `path.startsWith('https://')` exists elsewhere in the file. Validation status is now computed per call site, not by file-wide trace.
+- `electron_lint_security` `eval()` and `innerHTML` checks no longer fire on text inside comments or string literals (`// avoid eval()` or `"don't use eval()"`). Both checks now run against a comment-and-string-stripped copy of the input.
+- `electron_audit_performance` polyfill detection no longer fires on substring matches in comments (`// core-js is bad`). The check now matches an actual `import`/`require` of the package against a comment-stripped copy.
+- `electron_audit_performance` heavy-module check no longer flags the recommended lazy-load pattern -- a `require("sharp")` inside a function body. Detection is anchored to column 0, so only top-level `import ... from "sharp"` and `const ... = require("sharp")` count as eager. `await import("sharp")` (the dynamic-import lazy form) was already correctly skipped.
+- `electron_audit_performance` synchronous-operation finding no longer drops the second match. The previous loop broke after the first matched pattern and emitted a single generic finding; it now collects every matched pattern (`fs *Sync calls`, `child_process *Sync`) into one consolidated finding listing all of them.
+- `electron_diagnose_build_error` ASAR/packaging diagnosis now fires on Windows packaged-app paths. The packaging-issue gate was missing `\AppData\Local\`, `\Program Files\`, NSIS-style `app-X.Y.Z\` subdirectories, and `Squirrel`; a Windows `MODULE_NOT_FOUND` from inside a packaged app was previously misdiagnosed as a missing devDep.
+- `electron_configure_deep_linking` generated `handleDeepLink` no longer drops the host segment of `myapp://foo/bar`. The previous form `parsed.pathname || parsed.host` returned `/bar` (host lost) for two-segment URLs and `settings` (no leading slash) for `myapp://settings`. Generated code now combines host and pathname into a single leading-slash path so route matching is consistent across all four URL shapes (`myapp://foo`, `myapp://foo/bar`, `myapp:foo`, `myapp:/foo`).
+- `electron_configure_csp` dev `style-src` now honors `needsInlineStyles: false` when the bundler is `none`. Previously dev mode hardcoded `'unsafe-inline'` regardless of input. Vite and webpack still emit `'unsafe-inline'` because their HMR style injection requires it.
+- `index.ts` knowledge-footer injection now appends only to string handler returns. A future tool that returns structured (object/array) data would have produced `JSON.stringify(...) + footer` -- broken JSON. All current tools return strings; the guard is preventive.
+
+### Added
+
+- `electron_audit_security` covers six additional checks from the official Electron security checklist: shell.openExternal validation (#14), file:// protocol usage (#15), `<webview>` tag presence (#16), will-navigate handler (#17), setWindowOpenHandler (#18), and IPC sender validation (#19). Total static-input coverage moves from 13 items to 19. The audit footer now explicitly names the items that require runtime/packaging context (session permission handling, fuse configuration) so callers know what static analysis cannot reach.
+- New `src/static-analysis.ts` utility with `stripComments` and `stripCommentsAndStrings` lexical scrubbers shared by every static-analysis tool. Eliminates the recurring failure mode where regex pattern matches false-positive on text inside comments or string literals.
+- `src/static-analysis.test.ts` pinning the scrubber contract: comment removal, string preservation (or stripping), `//` inside `https://` URLs not treated as a comment start, escapes don't terminate strings, multi-line strings preserve newlines for line-number alignment, unterminated block comments don't infinite-loop.
+- Regression tests for every fix in this release: hardcoded-https openExternal not flagged, dynamic openExternal flagged with or without unrelated `startsWith('https')` elsewhere, eval-in-comment / eval-in-string not flagged, lazy require not flagged, `await import` not flagged, polyfill-in-comment not flagged, sync-pattern finding consolidates all matches, Windows AppData path triggers ASAR diagnosis, Squirrel keyword triggers ASAR diagnosis, deep-link path normalization, dev CSP honors `needsInlineStyles:false` for `bundler: "none"`, dev CSP keeps `'unsafe-inline'` for Vite, six new audit checks with their expected pass/warn statuses.
+
+### Changed
+
+- `electron_audit_security` description rewritten to honestly enumerate the 19 covered items rather than claiming "all 20 official security recommendations." The two omitted items (session permissions, fuses) are surfaced in the report footer with pointers to where they live.
+- Inputs to `electron_audit_security`, `electron_audit_ipc_security`, `electron_audit_performance`, and `electron_lint_security` are run through `stripComments` (preserving string contents) before pattern matching. Checks that should ignore string content too (eval, innerHTML) additionally use `stripCommentsAndStrings`.
+- Integration test for the validation-error path is now SDK-version-tolerant. It accepts any of the field name, the offending value, or the words `invalid`/`validation`/`expected` -- so a minor SDK formatting change won't break the test even though the assertion still proves the error is actionable.
+
 ## [1.1.1] - 2026-04-24
 
 ### Infrastructure

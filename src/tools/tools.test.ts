@@ -202,6 +202,39 @@ describe("electron_audit_ipc_security", () => {
     assert.ok(result.includes("CRITICAL"), `expected CRITICAL finding, got:\n${result}`);
     assert.ok(result.includes("Raw ipcRenderer"));
   });
+
+  it("does NOT flag shell.openExternal with a hardcoded https literal", async () => {
+    // Regression: the previous guard `!/^https?:\/\//.test(code)` anchored
+    // to start-of-string, which never matched real source -- so every
+    // shell.openExternal call (even hardcoded https literals) was flagged.
+    const result = await tool({
+      mainCode: `shell.openExternal("https://example.com/docs");`,
+    });
+    assert.ok(
+      !result.includes("shell.openExternal with potentially unvalidated URL"),
+      `hardcoded https literal must not be flagged; got:\n${result}`,
+    );
+  });
+
+  it("flags shell.openExternal with a non-literal argument", async () => {
+    const result = await tool({
+      mainCode: "function open(url) { shell.openExternal(url); }",
+    });
+    assert.ok(
+      result.includes("shell.openExternal with potentially unvalidated URL"),
+      `dynamic openExternal must be flagged; got:\n${result}`,
+    );
+  });
+
+  it("flags shell.openExternal with a non-https hardcoded URL", async () => {
+    const result = await tool({
+      mainCode: `shell.openExternal("file:///etc/passwd");`,
+    });
+    assert.ok(
+      result.includes("shell.openExternal with potentially unvalidated URL"),
+      `non-https literal must be flagged; got:\n${result}`,
+    );
+  });
 });
 
 describe("electron_generate_window_manager", () => {
@@ -341,6 +374,72 @@ describe("electron_audit_security", () => {
     });
     assert.strictEqual(statusOf(result, 1), "FAIL", `http:// in mainCode should FAIL #1, got:\n${result}`);
   });
+
+  it("warns when shell.openExternal is called with non-literal input", async () => {
+    const result = await tool({
+      mainCode: "function open(url) { shell.openExternal(url); }",
+    });
+    assert.strictEqual(statusOf(result, 14), "WARN", `dynamic openExternal should WARN #14, got:\n${result}`);
+  });
+
+  it("passes #14 when every shell.openExternal call uses a hardcoded https literal", async () => {
+    const result = await tool({
+      mainCode: `shell.openExternal("https://example.com/docs");`,
+    });
+    assert.strictEqual(statusOf(result, 14), "PASS", `hardcoded https literal should PASS #14, got:\n${result}`);
+  });
+
+  it("warns on file:// usage in main code", async () => {
+    const result = await tool({
+      mainCode: `mainWindow.loadURL("file:///path/to/index.html");`,
+    });
+    assert.strictEqual(statusOf(result, 15), "WARN", `file:// should WARN #15, got:\n${result}`);
+  });
+
+  it("warns when <webview> appears in HTML", async () => {
+    const result = await tool({
+      htmlContent: `<html><body><webview src="https://example.com"></webview></body></html>`,
+    });
+    assert.strictEqual(statusOf(result, 16), "WARN", `<webview> should WARN #16, got:\n${result}`);
+  });
+
+  it("warns when BrowserWindow is created without a will-navigate handler", async () => {
+    const result = await tool({
+      mainCode: `const win = new BrowserWindow({});\nwin.loadURL("https://example.com");`,
+    });
+    assert.strictEqual(statusOf(result, 17), "WARN", `missing will-navigate should WARN #17, got:\n${result}`);
+  });
+
+  it("warns when BrowserWindow is created without setWindowOpenHandler", async () => {
+    const result = await tool({
+      mainCode: `const win = new BrowserWindow({});\nwin.loadURL("https://example.com");`,
+    });
+    assert.strictEqual(statusOf(result, 18), "WARN", `missing setWindowOpenHandler should WARN #18, got:\n${result}`);
+  });
+
+  it("warns when ipcMain handlers don't validate sender", async () => {
+    const result = await tool({
+      mainCode: `ipcMain.handle("read-file", async (event, path) => { return fs.readFileSync(path); });`,
+    });
+    assert.strictEqual(statusOf(result, 19), "WARN", `unvalidated IPC sender should WARN #19, got:\n${result}`);
+  });
+
+  it("passes #19 when sender is referenced", async () => {
+    const result = await tool({
+      mainCode: `ipcMain.handle("x", (event) => { const u = new URL(event.senderFrame.url); });`,
+    });
+    assert.strictEqual(statusOf(result, 19), "PASS", `senderFrame reference should PASS #19, got:\n${result}`);
+  });
+
+  it("notes the static-analysis blind spots in the report footer", async () => {
+    const result = await tool({
+      browserWindowConfig: "{ webPreferences: { contextIsolation: true } }",
+    });
+    assert.ok(
+      /not covered by static analysis/i.test(result),
+      `report should call out static-analysis blind spots; got:\n${result}`,
+    );
+  });
 });
 
 describe("electron_configure_fuses", () => {
@@ -390,6 +489,28 @@ describe("electron_configure_csp", () => {
     });
     assert.ok(result.includes("https://api.example.com"));
   });
+
+  it("honors needsInlineStyles:false in dev CSP when bundler doesn't require HMR styling", async () => {
+    // Regression: dev style-src was previously hardcoded to append
+    // 'unsafe-inline', silently overriding the user's input.
+    const result = await tool({ needsInlineStyles: false, bundler: "none" });
+    const devSection = result.match(/## Development CSP\n\n```\n([\s\S]*?)\n```/);
+    assert.ok(devSection, "dev CSP block must be present");
+    assert.ok(
+      !/style-src[^;]*'unsafe-inline'/.test(devSection[1]),
+      `dev style-src must honor needsInlineStyles:false when bundler doesn't need HMR styling; got:\n${devSection[1]}`,
+    );
+  });
+
+  it("still emits unsafe-inline for vite dev style-src (HMR requires it)", async () => {
+    const result = await tool({ bundler: "vite" });
+    const devSection = result.match(/## Development CSP\n\n```\n([\s\S]*?)\n```/);
+    assert.ok(devSection, "dev CSP block must be present");
+    assert.ok(
+      /style-src[^;]*'unsafe-inline'/.test(devSection[1]),
+      `vite dev CSP must keep unsafe-inline so HMR styling works; got:\n${devSection[1]}`,
+    );
+  });
 });
 
 describe("electron_lint_security", () => {
@@ -418,6 +539,53 @@ describe("electron_lint_security", () => {
       fileType: "main",
     });
     assert.ok(result.includes("CLEAN") || result.includes("No security issues"));
+  });
+
+  it("does NOT flag eval mentioned in a comment", async () => {
+    // Regression: previous regex matched any `eval(` substring including
+    // in `// avoid eval()` comments, producing false positives.
+    const result = await tool({
+      code: "// We deliberately avoid eval() here for safety.\nfunction add(a, b) { return a + b; }",
+      fileType: "main",
+    });
+    assert.ok(!result.includes("eval()"), `comment-only eval mention must not flag; got:\n${result}`);
+  });
+
+  it("does NOT flag eval inside a string literal", async () => {
+    const result = await tool({
+      code: `const help = "Don't use eval() unless you know what you're doing";`,
+      fileType: "main",
+    });
+    assert.ok(!result.includes("eval()"), `string-literal eval mention must not flag; got:\n${result}`);
+  });
+
+  it("does NOT flag shell.openExternal with hardcoded https literal", async () => {
+    // Regression: previous heuristic flagged on any nearby `protocol ===`,
+    // and missing-validation detection looked at the whole file. Each
+    // call site is now examined individually.
+    const result = await tool({
+      code: `import { shell } from "electron";\nshell.openExternal("https://example.com/docs");`,
+      fileType: "main",
+    });
+    assert.ok(
+      !result.includes("shell.openExternal without URL validation"),
+      `hardcoded https openExternal must not be flagged in lint; got:\n${result}`,
+    );
+  });
+
+  it("flags shell.openExternal with dynamic argument even when an unrelated startsWith('https') exists", async () => {
+    // Regression: the previous noValidation guard said "no finding if the
+    // file has `startsWith('https')` ANYWHERE", which masked unrelated
+    // genuinely-unvalidated call sites. The per-call check no longer
+    // depends on file-wide validation traces.
+    const result = await tool({
+      code: `function safe(p) { return p.startsWith('https://'); }\nshell.openExternal(unsafeUrl);`,
+      fileType: "main",
+    });
+    assert.ok(
+      result.includes("shell.openExternal without URL validation"),
+      `dynamic openExternal must be flagged even when file has unrelated startsWith('https'); got:\n${result}`,
+    );
   });
 
   it("schema rejects code larger than the per-field cap", () => {
@@ -475,6 +643,31 @@ describe("electron_diagnose_build_error", () => {
         "ENOENT: no such file or directory, open '/Applications/MyApp.app/Contents/Resources/app.asar/foo.js'",
     });
     assert.ok(result.includes("Missing file or module in packaged app"));
+  });
+
+  it("attributes MODULE_NOT_FOUND to packaging on Windows AppData paths", async () => {
+    // Regression: the packaging-issue gate previously only covered macOS
+    // bundles and unix-style paths, so a Windows packaged-app failure
+    // (AppData\Local\<App>\app-X.Y.Z\...) was misdiagnosed as a generic
+    // missing devDep.
+    const result = await tool({
+      errorOutput:
+        "Error: Cannot find module 'foo'\n  at C:\\Users\\jeff\\AppData\\Local\\MyApp\\app-1.0.0\\resources\\app.asar\\index.js",
+    });
+    assert.ok(
+      result.includes("Missing file or module in packaged app"),
+      `Windows packaged-app paths should trigger the ASAR diagnosis; got:\n${result}`,
+    );
+  });
+
+  it("attributes MODULE_NOT_FOUND to packaging on Squirrel installer paths", async () => {
+    const result = await tool({
+      errorOutput: "Squirrel: failed to launch app: cannot find module 'foo'",
+    });
+    assert.ok(
+      result.includes("Missing file or module in packaged app"),
+      `Squirrel-keyword errors should trigger the ASAR diagnosis; got:\n${result}`,
+    );
   });
 
   it("suppresses macOS-specific diagnoses when platform is win32", async () => {
@@ -584,6 +777,24 @@ describe("electron_configure_deep_linking", () => {
       /whenReady[\s\S]*handleDeepLinkOnLaunch/.test(result),
       "call site must be shown inside the app.whenReady() block",
     );
+  });
+
+  it("normalizes the deep-link path so myapp://settings parses to /settings", async () => {
+    // Regression: the previous `parsed.pathname || parsed.host` form
+    // emitted "settings" for myapp://settings (no leading slash),
+    // breaking route matching that uses path.startsWith("/settings").
+    // It also dropped the host segment for myapp://foo/bar (returned
+    // "/bar" instead of "/foo/bar").
+    const result = await tool({ protocol: "myapp" });
+    const match = result.match(/## Main Process\n\n```typescript\n([\s\S]*?)\n```/);
+    assert.ok(match, "main process code block must be present");
+    const mainCode = match[1];
+    assert.ok(
+      /host\s*\?\s*`\/\$\{host\}\$\{rawPath\}`/.test(mainCode),
+      `path normalization must combine host and pathname into a single leading-slash path; got:\n${mainCode}`,
+    );
+    // Sanity: the normalized 'path' is what's sent to the renderer.
+    assert.ok(/send\("deep-link",\s*\{\s*path,/.test(mainCode));
   });
 });
 
@@ -703,6 +914,53 @@ describe("electron_audit_performance", () => {
   it("prompts for input when nothing is provided", async () => {
     const result = await tool({});
     assert.ok(result.includes("Please provide") || result.includes("at least one"));
+  });
+
+  it("does NOT flag function-scoped lazy require of a heavy module", async () => {
+    // Regression: previous regex matched any occurrence of `require("sharp")`,
+    // including the recommended lazy-load pattern inside a function body.
+    const result = await tool({
+      mainCode: "async function processImage() {\n  const sharp = require('sharp');\n  return sharp;\n}",
+    });
+    assert.ok(
+      !/Eager loading of heavy module: sharp/.test(result),
+      `lazy require inside a function must not be flagged as eager; got:\n${result}`,
+    );
+  });
+
+  it("does NOT flag dynamic import() of a heavy module", async () => {
+    const result = await tool({
+      mainCode: "async function process() {\n  const sharp = await import('sharp');\n  return sharp;\n}",
+    });
+    assert.ok(
+      !/Eager loading of heavy module: sharp/.test(result),
+      `await import() must not be flagged as eager; got:\n${result}`,
+    );
+  });
+
+  it("does NOT flag polyfill mention in a comment", async () => {
+    // Regression: previous check used `code.includes(poly)` and matched
+    // any substring, including in comments.
+    const result = await tool({
+      rendererCode: "// We removed core-js because Electron doesn't need it\nconsole.log('hi');",
+    });
+    assert.ok(
+      !/Unnecessary polyfill: core-js/.test(result),
+      `polyfill mention in a comment must not be flagged; got:\n${result}`,
+    );
+  });
+
+  it("emits a single sync-operation finding listing every matched pattern", async () => {
+    // Regression: previous loop broke after the first match and lost the
+    // other pattern names.
+    const result = await tool({
+      mainCode:
+        "const x = fs.readFileSync('a.txt');\nconst y = execSync('cmd');\nconst z = fs.writeFileSync('b.txt', 'c');",
+    });
+    const findings = result.match(/Synchronous main-process operations:[^\n]*/g);
+    assert.ok(findings && findings.length === 1, `expected one consolidated sync finding; got: ${findings?.length}`);
+    assert.ok(/fs \*Sync calls/.test(findings[0]), `finding should list fs *Sync; got: ${findings[0]}`);
+    assert.ok(/child_process \*Sync/.test(findings[0]), `finding should list child_process *Sync; got: ${findings[0]}`);
   });
 });
 

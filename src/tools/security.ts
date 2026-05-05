@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { KNOWLEDGE_VERSION } from "../knowledge.js";
+import { stripComments, stripCommentsAndStrings } from "../static-analysis.js";
 
 // Electron's support policy: current stable + previous two majors receive
 // security patches. Derive the supported floor from the embedded knowledge
@@ -7,11 +8,22 @@ import { KNOWLEDGE_VERSION } from "../knowledge.js";
 const SUPPORTED_MIN = KNOWLEDGE_VERSION.electronStable - 2;
 const SUPPORTED_MAX = KNOWLEDGE_VERSION.electronStable;
 
+// A `shell.openExternal(arg)` call is "safe" iff its first argument is a
+// complete string literal that starts with https://. Mirrors the helper in
+// ipc.ts so the audit and lint tools agree on what counts as validated.
+const SAFE_HTTPS_LITERAL = /^['"`]https:\/\/[^'"`]*['"`]\s*$/;
+
+function unsafeOpenExternalCallSites(code: string): RegExpMatchArray[] {
+  return [...code.matchAll(/shell\.openExternal\s*\(\s*([^,)]+)/g)].filter(
+    (m) => !SAFE_HTTPS_LITERAL.test(m[1].trim()),
+  );
+}
+
 export const securityTools = [
   {
     name: "electron_audit_security",
     description:
-      "Comprehensive security audit of an Electron app against all 20 official security recommendations. Analyzes BrowserWindow configuration, package.json, preload scripts, and CSP headers. Returns a checklist with pass/fail status and remediation steps for each item.",
+      "Audit an Electron app against the official security checklist. Covers 19 of the items that can be detected from static inputs (BrowserWindow configuration, main process code, package.json, preload, HTML): HTTPS-only content, nodeIntegration, contextIsolation, sandbox, webSecurity, CSP, allowRunningInsecureContent, experimentalFeatures, enableBlinkFeatures, raw ipcRenderer exposure, direct window assignment, @electron/remote, supported Electron version, shell.openExternal validation, file:// usage, <webview> tag, will-navigate handler, setWindowOpenHandler, and IPC sender validation. The remaining checklist items (session permissions, fuse configuration) require runtime / packaging context and are flagged in the report's footer.",
     annotations: {
       title: "Audit app security",
       readOnlyHint: true,
@@ -53,9 +65,12 @@ export const securityTools = [
     }) => {
       const checks: Array<{ id: number; name: string; status: string; detail: string }> = [];
       const bwConfig = input.browserWindowConfig || "";
-      const mainCode = input.mainCode || "";
+      // Strip comments from JS-shaped inputs before scanning so docstrings
+      // and inline notes don't trigger false positives. HTML is left alone
+      // because the CSP / <webview> checks need to see the raw markup.
+      const mainCode = input.mainCode ? stripComments(input.mainCode) : "";
       const pkgJson = input.packageJson || "";
-      const preload = input.preloadCode || "";
+      const preload = input.preloadCode ? stripComments(input.preloadCode) : "";
       const html = input.htmlContent || "";
 
       // Default assumes latest supported stable; overridden by explicit input
@@ -266,6 +281,88 @@ export const securityTools = [
         }
       }
 
+      // 14. shell.openExternal validation (main process)
+      if (mainCode && /shell\.openExternal\s*\(/.test(mainCode)) {
+        const unsafe = unsafeOpenExternalCallSites(mainCode);
+        checks.push({
+          id: 14,
+          name: "Validate URLs passed to shell.openExternal",
+          status: unsafe.length === 0 ? "PASS" : "WARN",
+          detail:
+            unsafe.length === 0
+              ? "All shell.openExternal call sites use a hardcoded https:// string literal."
+              : `Found ${unsafe.length} shell.openExternal call(s) with non-literal or non-https arguments. shell.openExternal can invoke protocol handlers like file:// and smb:// -- validate the URL's protocol before opening untrusted input.`,
+        });
+      }
+
+      // 15. file:// protocol usage
+      if (mainCode && /['"`]file:\/\//.test(mainCode)) {
+        checks.push({
+          id: 15,
+          name: "Avoid file:// for app content",
+          status: "WARN",
+          detail:
+            "file:// URL detected in main code. The file:// protocol bypasses CORS and grants unusual privileges; prefer protocol.handle() with a custom scheme for loading app content.",
+        });
+      }
+
+      // 16. <webview> tag
+      if (html && /<webview\b/i.test(html)) {
+        checks.push({
+          id: 16,
+          name: "Avoid the <webview> tag",
+          status: "WARN",
+          detail:
+            "<webview> tag detected. The webview tag has known security issues and a complex security model -- prefer BrowserView / WebContentsView for embedding remote or untrusted content.",
+        });
+      }
+
+      // 17 / 18 share a trigger: code that actually CONSTRUCTS a window.
+      // Substring matching on `BrowserWindow` would also fire on string
+      // literals or type-only references; require `new BrowserWindow(...)`
+      // or `new BaseWindow(...)` so we only ask about navigation/open
+      // restrictions when there's a concrete window to apply them to.
+      const constructsWindow = /new\s+(?:BrowserWindow|BaseWindow)\s*\(/.test(mainCode);
+
+      // 17. will-navigate handler restricting navigation
+      if (constructsWindow) {
+        const hasGuard = /will-navigate/.test(mainCode);
+        checks.push({
+          id: 17,
+          name: "Restrict navigation with will-navigate",
+          status: hasGuard ? "PASS" : "WARN",
+          detail: hasGuard
+            ? "will-navigate handler detected."
+            : "No will-navigate handler. Without one, the renderer can navigate to arbitrary URLs that may exploit the parent's webPreferences.",
+        });
+      }
+
+      // 18. setWindowOpenHandler restricting new windows
+      if (constructsWindow) {
+        const hasGuard = /setWindowOpenHandler/.test(mainCode);
+        checks.push({
+          id: 18,
+          name: "Restrict new-window creation with setWindowOpenHandler",
+          status: hasGuard ? "PASS" : "WARN",
+          detail: hasGuard
+            ? "setWindowOpenHandler detected."
+            : "No setWindowOpenHandler. window.open() in the renderer creates new BrowserWindows that inherit the parent's webPreferences -- attach a handler to deny or sandbox them.",
+        });
+      }
+
+      // 19. IPC sender validation
+      if (mainCode && /ipcMain\.(handle|on)\s*\(/.test(mainCode)) {
+        const hasGuard = /senderFrame|sender\.url|event\.sender/.test(mainCode);
+        checks.push({
+          id: 19,
+          name: "Validate IPC sender",
+          status: hasGuard ? "PASS" : "WARN",
+          detail: hasGuard
+            ? "IPC handlers reference event.sender / senderFrame -- ensure security-sensitive handlers verify the origin."
+            : "No IPC sender validation detected. Any frame (including injected web content in a webview) can invoke ipcMain handlers; check event.senderFrame.url in security-sensitive ones.",
+        });
+      }
+
       if (checks.length === 0) {
         return "Please provide at least one of: browserWindowConfig, mainCode, packageJson, preloadCode, or htmlContent to audit.";
       }
@@ -285,6 +382,9 @@ export const securityTools = [
       if (failed > 0) {
         report += `---\n\n**Action required:** ${failed} check(s) failed. Address FAIL items before shipping to production.\n`;
       }
+
+      report +=
+        "\n---\n\n**Items not covered by static analysis:** session permission request handling and Electron fuse configuration require runtime / packaging context. Use `electron_configure_fuses` to generate a fuses config and review `session.setPermissionRequestHandler` in the official security tutorial.\n";
 
       return report;
     },
@@ -544,10 +644,21 @@ npm install --save-dev @electron/fuses
         devScriptSrc += " 'unsafe-eval'"; // webpack HMR uses eval
       }
 
+      // style-src in dev: HMR-injected style tags require 'unsafe-inline' for
+      // Vite and webpack. If the user explicitly opted out (needsInlineStyles
+      // === false) AND isn't using one of those bundlers, honor the opt-out.
+      // For Vite/webpack we still emit unsafe-inline because dev styling
+      // breaks without it -- the dev CSP is loaded only against your own
+      // dev server, so this is a controlled relaxation.
+      const bundlerNeedsInlineStyles = bundler === "vite" || bundler === "webpack";
+      const devStyleNeedsInline = input.needsInlineStyles !== false || bundlerNeedsInlineStyles;
+      const devStyleSrc =
+        devStyleNeedsInline && !styleSrc.includes("'unsafe-inline'") ? `${styleSrc} 'unsafe-inline'` : styleSrc;
+
       const devCSP = [
         `default-src 'self'`,
         `script-src ${devScriptSrc}`,
-        `style-src ${styleSrc} 'unsafe-inline'`,
+        `style-src ${devStyleSrc}`,
         `img-src ${imgSrc.join(" ")}`,
         `font-src 'self' data:`,
         `connect-src ${devConnectSrc.join(" ")}`,
@@ -619,11 +730,18 @@ app.whenReady().then(() => {
     }),
     handler: async (input: { code: string; fileType?: string }) => {
       const fileType = input.fileType || "main";
-      const code = input.code;
+      // Strip comments so docstrings/inline notes don't fire findings, and
+      // strip string literals for the eval / innerHTML checks since `"use
+      // eval()"` is documentation, not a call. Other checks below scan the
+      // comment-stripped (but string-preserving) version where the pattern
+      // requires a string literal (module name, channel name, etc.).
+      const code = stripComments(input.code);
+      const codeNoStrings = stripCommentsAndStrings(input.code);
       const findings: Array<{ severity: string; pattern: string; detail: string; fix: string; line?: string }> = [];
 
-      // Universal checks
-      if (/eval\s*\(/.test(code) && !/['"]unsafe-eval['"]/.test(code)) {
+      // Universal checks -- run against the no-strings version so a comment
+      // or string literal that mentions `eval()` doesn't generate a finding.
+      if (/\beval\s*\(/.test(codeNoStrings)) {
         findings.push({
           severity: "HIGH",
           pattern: "eval() usage",
@@ -633,7 +751,7 @@ app.whenReady().then(() => {
         });
       }
 
-      if (/innerHTML\s*=/.test(code) || /dangerouslySetInnerHTML/.test(code)) {
+      if (/\.innerHTML\s*=/.test(codeNoStrings) || /dangerouslySetInnerHTML/.test(codeNoStrings)) {
         findings.push({
           severity: "HIGH",
           pattern: "innerHTML / dangerouslySetInnerHTML",
@@ -644,18 +762,18 @@ app.whenReady().then(() => {
       }
 
       if (fileType === "main") {
-        // shell.openExternal
-        if (/shell\.openExternal\s*\(/.test(code)) {
-          const noValidation = !/protocol\s*===|\.protocol\s*===|startsWith\s*\(\s*['"]https/.test(code);
-          if (noValidation) {
-            findings.push({
-              severity: "HIGH",
-              pattern: "shell.openExternal without URL validation",
-              detail:
-                "shell.openExternal can execute arbitrary commands via protocol handlers (file://, smb://, etc.). If the URL is derived from user input or renderer messages, it must be validated.",
-              fix: `Validate protocol before opening:\n\`\`\`typescript\nconst url = new URL(untrustedInput);\nif (url.protocol === "https:" || url.protocol === "http:") {\n  shell.openExternal(url.toString());\n}\n\`\`\``,
-            });
-          }
+        // shell.openExternal: examine call sites individually so
+        // hardcoded https-literal calls don't produce a finding, and so
+        // unrelated `startsWith('https')` elsewhere in the file doesn't
+        // mask a genuinely unvalidated call.
+        if (unsafeOpenExternalCallSites(code).length > 0) {
+          findings.push({
+            severity: "HIGH",
+            pattern: "shell.openExternal without URL validation",
+            detail:
+              "shell.openExternal can execute arbitrary commands via protocol handlers (file://, smb://, etc.). If the URL is derived from user input or renderer messages, it must be validated.",
+            fix: `Validate protocol before opening:\n\`\`\`typescript\nconst url = new URL(untrustedInput);\nif (url.protocol === "https:" || url.protocol === "http:") {\n  shell.openExternal(url.toString());\n}\n\`\`\``,
+          });
         }
 
         // Missing will-navigate handler

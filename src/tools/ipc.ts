@@ -1,5 +1,21 @@
 import { z } from "zod";
 import { KNOWLEDGE_VERSION } from "../knowledge.js";
+import { stripComments } from "../static-analysis.js";
+
+// A `shell.openExternal(arg)` call is considered safe iff its first argument
+// is a single complete string literal that starts with `https://`. Anything
+// else (variable, concatenation, non-https protocol, template literal) means
+// the URL might originate from user input and warrants validation.
+const SAFE_HTTPS_LITERAL = /^['"`]https:\/\/[^'"`]*['"`]\s*$/;
+
+function hasUnsafeOpenExternal(code: string): boolean {
+  // `[^,)]+` captures up to the first comma or closing paren -- enough to
+  // reach the first argument in the common case `shell.openExternal(arg)`
+  // and `shell.openExternal(arg, opts)`.
+  const matches = [...code.matchAll(/shell\.openExternal\s*\(\s*([^,)]+)/g)];
+  if (matches.length === 0) return false;
+  return matches.some((m) => !SAFE_HTTPS_LITERAL.test(m[1].trim()));
+}
 
 export const ipcTools = [
   {
@@ -448,7 +464,9 @@ declare global {
       }
 
       if (input.mainCode) {
-        const code = input.mainCode;
+        // Strip comments before scanning so docstrings/inline notes that
+        // mention these patterns don't trigger findings.
+        const code = stripComments(input.mainCode);
 
         // Check for missing sender validation
         if (/ipcMain\.(handle|on)\s*\(/.test(code) && !/senderFrame|sender\.url|event\.sender/.test(code)) {
@@ -461,8 +479,16 @@ declare global {
           });
         }
 
-        // Check for shell.openExternal with dynamic input
-        if (/shell\.openExternal\s*\(/.test(code) && !/^https?:\/\//.test(code)) {
+        // shell.openExternal with potentially unvalidated input.
+        // Walk every call site instead of testing a single global flag --
+        // the previous form anchored on `^https?://` at start-of-string,
+        // which never matched real source and so flagged every call site
+        // (including hardcoded `shell.openExternal("https://example.com")`).
+        // A call is considered safe if its first argument is a complete
+        // string literal beginning with https:// (a fully hardcoded URL).
+        // Anything else (variable, concatenation, template literal,
+        // non-https protocol) gets flagged.
+        if (hasUnsafeOpenExternal(code)) {
           findings.push({
             severity: "HIGH",
             issue: "shell.openExternal with potentially unvalidated URL",
