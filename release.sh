@@ -77,8 +77,8 @@ fi
 if [ "$IS_CI" != "true" ] && [ "$RESUMING" != "true" ]; then
   echo ""
   echo -e "${YELLOW}About to release v${VERSION}. This will:${NC}"
-  echo "  1. Run lint + tests"
-  echo "  2. Build"
+  echo "  1. Run lint"
+  echo "  2. Build + tests"
   echo "  3. Bump version in package.json"
   echo "  4. Commit, tag, and push"
   echo "  5. Publish to npm"
@@ -98,17 +98,32 @@ fi
 # =============================================================================
 step 1 "Lint"
 
-npm run lint || fail "Lint failed"
-info "Lint passed"
+# In CI, ci.yml ran lint as a workflow_call gate before this job started, so
+# repeating it here just burns runner minutes. Local runs still lint -- it's
+# the only place a developer's pre-publish gate lives.
+if [ "$IS_CI" = "true" ]; then
+  info "CI mode -- lint already ran in ci.yml gate, skipping"
+else
+  npm run lint || fail "Lint failed"
+  info "Lint passed"
+fi
 
 # =============================================================================
-# Step 2: Test
+# Step 2: Build & test
 # =============================================================================
-step 2 "Test"
+step 2 "Build & test"
 
-npm run build || fail "Build failed"
-npm test || fail "Tests failed"
-info "All tests passed"
+# Same logic as step 1: ci.yml's matrix already built and tested on every
+# supported Node version. npm publish below also triggers prepublishOnly,
+# which builds + tests again, so the artifact is still verified before it
+# reaches the registry.
+if [ "$IS_CI" = "true" ]; then
+  info "CI mode -- build+tests covered by ci.yml gate and prepublishOnly, skipping"
+else
+  npm run build || fail "Build failed"
+  npm test || fail "Tests failed"
+  info "Build + tests passed"
+fi
 
 # =============================================================================
 # Step 3: Bump version
@@ -141,15 +156,21 @@ else
   if git tag -l "v${VERSION}" | grep -q "v${VERSION}"; then
     info "Tag v${VERSION} already exists"
   else
-    # Annotated (-a) so `git push --follow-tags` below picks it up;
-    # lightweight tags are ignored by --follow-tags and would silently
-    # fail to publish (release commit lands but tag-push is a no-op).
+    # Annotated (-a) so the tag carries metadata (tagger, date, message)
+    # and is signing-ready, not because the push relies on it -- the push
+    # below is an explicit `git push origin "v${VERSION}"`, so lightweight
+    # vs annotated doesn't change whether the tag lands on origin.
     git tag -a "v${VERSION}" -m "v${VERSION}"
     info "Tag v${VERSION} created"
   fi
 
-  # Push main + the tag. --follow-tags only pushes annotated tags, so push the
-  # tag explicitly to cover lightweight tags too.
+  # Two pushes, not `git push --follow-tags`: --follow-tags only ships
+  # annotated tags reachable from refs that are *actually being updated*,
+  # so on a resumed run where main is already on origin (publish failed
+  # last time, retry today) the no-op main push wouldn't carry the tag
+  # along. The explicit tag push always lands the tag, first run or
+  # resume. Annotated-vs-lightweight is a separate concern handled at
+  # tag-creation above; here we just need both refs on origin.
   git push origin main
   git push origin "v${VERSION}"
   info "Pushed to origin"
@@ -181,8 +202,14 @@ step 6 "Create GitHub release"
 if gh release view "v${VERSION}" >/dev/null 2>&1; then
   info "GitHub release v${VERSION} already exists -- skipping"
 else
-  PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^v${VERSION}$" | tail -1)
-  if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "v${VERSION}" ]; then
+  # Most recent tag reachable from v${VERSION}'s parent. Using git's own
+  # ancestry beats sort+grep+tail on tag names: a stray future tag (e.g.
+  # someone pre-tagging v2.0.0 ahead of an actual v1.x release) sorts above
+  # the current one and corrupts a name-based "previous" lookup. Ancestry
+  # walks the commit graph instead. If there's no prior tag (initial
+  # release), git describe exits non-zero and PREV_TAG stays empty.
+  PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+  if [ -n "$PREV_TAG" ]; then
     CHANGELOG=$(git log --oneline "${PREV_TAG}..v${VERSION}" --no-decorate | sed 's/^[a-f0-9]* /- /')
   else
     CHANGELOG="Initial release"
