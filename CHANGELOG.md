@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-06
+
+### Infrastructure
+
+This release is CI/release-pipeline only -- no source-code or tool-behavior changes.
+
+- `release.yml` now `needs: ci` -- the ci.yml workflow is reused via `workflow_call` so a release tag can't publish unless the matrix CI run on the same ref passed first. Previously release.yml ran no pre-publish checks at the workflow level (release.sh did its own lint/test internally, but failures were buried inside the Release step's log).
+- `release.yml` adds a post-publish smoke test step. Once npm view sees the new version, the runner `npx`'s the freshly published package from a temp dir and asserts `--version` matches the tag. Catches packaging regressions (missing bin shebang, bad `"files"` entry, broken esbuild output) before they hit real users. `release.sh` step 7 gains a matching provenance-attestation check.
+- `release.yml` adds a top-level `concurrency` block. Group key is the literal `release-npm` so back-to-back tag pushes serialize their publish jobs through one queue instead of racing on npm. `cancel-in-progress: false` so a queued run waits its turn (losing a tag's release event is worse than waiting a minute).
+- `release.sh` step 4 creates an annotated tag (`git tag -a "v${VERSION}" -m "v${VERSION}"`) instead of a lightweight one. Carries metadata (tagger, date, message) and is signing-ready. Both pushes are still explicit (`git push origin main` then `git push origin "v${VERSION}"`) so a resumed run with main already on origin still lands the tag.
+- `release.sh` step 5 idempotency check queries the specific version (`npm view "@yawlabs/electron-mcp@${VERSION}" version`) rather than the package's `latest` dist-tag. The bare query returns whichever version is latest on the registry, so an out-of-band higher version would have made the script try to re-publish the current one and fail with "cannot publish over previously published version". The versioned form returns the version when it exists and empty otherwise -- correct idempotency semantics.
+- `release.sh` step 6 `PREV_TAG` lookup uses `git describe --tags --abbrev=0 "v${VERSION}^"` instead of sort+grep+tail on tag names. Walks the commit graph via ancestry, so a stray future tag (e.g. someone pre-tagging v2.0.0 ahead of an actual v1.x release) sorts above the current one and corrupts a name-based "previous" lookup; ancestry isn't fooled.
+- `release.sh` skips its own lint and build+test passes when `CI=true`. ci.yml's `workflow_call` gate already runs them on every supported Node version, and `prepublishOnly` rebuilds + retests inside `npm publish`, so the artifact is still verified before reaching the registry. Saves ~2 min per CI release run; local invocations still gate on lint + build + test.
+- `release.sh` step 2 renamed "Build & test" (it was labeled "Test" but ran build+test); the pre-flight summary mirrors the rename.
+- ci.yml matrix drops Node 18 (end-of-life on 2025-04-30) and now covers Node 20 + 22. `package.json` engines field bumps to `>=20` so the supported-version contract matches what we actually test.
+
+## [1.2.0] - 2026-05-04
+
 ### Fixed
 
 - `electron_audit_ipc_security` and `electron_lint_security` no longer flag `shell.openExternal("https://example.com")` as unvalidated. The previous heuristic was `!/^https?:\/\//.test(code)` which anchored to start-of-string and so never matched real source -- every call site was reported. Both tools now examine each `shell.openExternal(arg)` call individually and treat it as safe iff the first argument is a complete `https://` string literal.
