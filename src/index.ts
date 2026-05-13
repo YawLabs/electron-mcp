@@ -27,6 +27,15 @@ if (subcommand === "version" || subcommand === "--version") {
   process.exit(0);
 }
 
+// Reject unknown subcommands instead of silently starting the stdio MCP
+// server. Without this guard, a typo like `electron-mcp versoin` would block
+// on stdin forever while the user wonders why their command hangs. The MCP
+// server starts only when no positional argument is provided.
+if (subcommand !== undefined) {
+  console.error(`Unknown subcommand: ${subcommand}\nUsage: electron-mcp [version|--version]`);
+  process.exit(1);
+}
+
 // ─── No subcommand -- start the MCP server ───
 
 const allTools = [

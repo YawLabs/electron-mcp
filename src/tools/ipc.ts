@@ -1,21 +1,6 @@
 import { z } from "zod";
 import { KNOWLEDGE_VERSION } from "../knowledge.js";
-import { stripComments } from "../static-analysis.js";
-
-// A `shell.openExternal(arg)` call is considered safe iff its first argument
-// is a single complete string literal that starts with `https://`. Anything
-// else (variable, concatenation, non-https protocol, template literal) means
-// the URL might originate from user input and warrants validation.
-const SAFE_HTTPS_LITERAL = /^['"`]https:\/\/[^'"`]*['"`]\s*$/;
-
-function hasUnsafeOpenExternal(code: string): boolean {
-  // `[^,)]+` captures up to the first comma or closing paren -- enough to
-  // reach the first argument in the common case `shell.openExternal(arg)`
-  // and `shell.openExternal(arg, opts)`.
-  const matches = [...code.matchAll(/shell\.openExternal\s*\(\s*([^,)]+)/g)];
-  if (matches.length === 0) return false;
-  return matches.some((m) => !SAFE_HTTPS_LITERAL.test(m[1].trim()));
-}
+import { hasUnsafeOpenExternal, stripComments } from "../static-analysis.js";
 
 export const ipcTools = [
   {

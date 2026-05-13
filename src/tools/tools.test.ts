@@ -235,6 +235,19 @@ describe("electron_audit_ipc_security", () => {
       `non-https literal must be flagged; got:\n${result}`,
     );
   });
+
+  it("flags shell.openExternal with a template-literal that interpolates a value", async () => {
+    // Regression: the previous SAFE_HTTPS_LITERAL accepted any backtick body
+    // that contained no quote characters, including `${userInput}`. The
+    // refreshed regex disallows `${...}` interpolations in the safe branch.
+    const result = await tool({
+      mainCode: "shell.openExternal(`https://example.com/${userInput}`);",
+    });
+    assert.ok(
+      result.includes("shell.openExternal with potentially unvalidated URL"),
+      `template literal with interpolation must be flagged; got:\n${result}`,
+    );
+  });
 });
 
 describe("electron_generate_window_manager", () => {
@@ -429,6 +442,36 @@ describe("electron_audit_security", () => {
       mainCode: `ipcMain.handle("x", (event) => { const u = new URL(event.senderFrame.url); });`,
     });
     assert.strictEqual(statusOf(result, 19), "PASS", `senderFrame reference should PASS #19, got:\n${result}`);
+  });
+
+  it("recognizes CSP set via session.webRequest.onHeadersReceived in main code", async () => {
+    // Regression: check #6 previously only inspected HTML, so a project
+    // setting CSP through session.webRequest (the approach this MCP's own
+    // electron_configure_csp tool recommends) failed the check whenever HTML
+    // wasn't also provided. The check now treats a session-set CSP as PASS.
+    const result = await tool({
+      mainCode: `session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        callback({
+          responseHeaders: {
+            ...details.responseHeaders,
+            "Content-Security-Policy": ["default-src 'self'"],
+          },
+        });
+      });`,
+    });
+    assert.strictEqual(statusOf(result, 6), "PASS", `session-set CSP should PASS #6, got:\n${result}`);
+  });
+
+  it("does not run check #6 when only mainCode without a CSP signal is provided", async () => {
+    // Regression guard: before the session-CSP detection landed, mainCode-only
+    // inputs (no html) silently skipped #6. The new logic must preserve that
+    // for inputs that show no CSP at all -- otherwise audits that only get
+    // mainCode would always FAIL on missing CSP even though the user just
+    // didn't include their HTML.
+    const result = await tool({
+      mainCode: `win.loadURL("https://example.com");`,
+    });
+    assert.strictEqual(statusOf(result, 6), null, `#6 should be skipped without a CSP signal; got:\n${result}`);
   });
 
   it("notes the static-analysis blind spots in the report footer", async () => {
@@ -667,6 +710,39 @@ describe("electron_diagnose_build_error", () => {
     assert.ok(
       result.includes("Missing file or module in packaged app"),
       `Squirrel-keyword errors should trigger the ASAR diagnosis; got:\n${result}`,
+    );
+  });
+
+  it("attributes MODULE_NOT_FOUND to packaging on Linux /opt/<app>/ paths (deb installs)", async () => {
+    // Regression: the packaging-issue gate previously omitted Linux install
+    // paths, so a deb-packaged Electron app failing to find a module showed
+    // the generic "Unrecognized" diagnosis.
+    const result = await tool({
+      errorOutput: "Error: Cannot find module 'foo'\n  at /opt/MyApp/resources/app.asar/index.js",
+    });
+    assert.ok(
+      result.includes("Missing file or module in packaged app"),
+      `Linux /opt/<app>/ paths should trigger the ASAR diagnosis; got:\n${result}`,
+    );
+  });
+
+  it("attributes MODULE_NOT_FOUND to packaging on Linux /snap/<app>/ paths", async () => {
+    const result = await tool({
+      errorOutput: "Error: Cannot find module 'foo'\n  at /snap/myapp/current/resources/app.asar/index.js",
+    });
+    assert.ok(
+      result.includes("Missing file or module in packaged app"),
+      `Linux /snap/<app>/ paths should trigger the ASAR diagnosis; got:\n${result}`,
+    );
+  });
+
+  it("attributes MODULE_NOT_FOUND to packaging on AppImage mount paths", async () => {
+    const result = await tool({
+      errorOutput: "Error: Cannot find module 'foo'\n  at /tmp/.mount_MyAppABCDEF/resources/app.asar/index.js",
+    });
+    assert.ok(
+      result.includes("Missing file or module in packaged app"),
+      `AppImage mount paths should trigger the ASAR diagnosis; got:\n${result}`,
     );
   });
 

@@ -154,4 +154,28 @@ describe("integration: stdio MCP server", () => {
     const out = execFileSync(process.execPath, [serverPath, "version"], { encoding: "utf-8" }).trim();
     assert.ok(/^\d+\.\d+\.\d+/.test(out), `expected semver, got: ${out}`);
   });
+
+  it("rejects unknown subcommands instead of hanging on stdin", () => {
+    // Regression guard: a typo (`electron-mcp versoin`) previously fell
+    // through to the MCP server, which blocks on stdio and looks like a
+    // hang to the user. The CLI now errors out non-interactively.
+    let exited = false;
+    let stderr = "";
+    try {
+      execFileSync(process.execPath, [serverPath, "versoin"], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+        // Belt-and-braces -- if the guard regresses and the process actually
+        // starts the MCP server, kill it instead of hanging the test runner.
+        timeout: 5000,
+      });
+    } catch (err) {
+      exited = true;
+      const e = err as { status?: number; stderr?: string };
+      stderr = e.stderr ?? "";
+      assert.notStrictEqual(e.status, 0, "non-zero exit expected for unknown subcommand");
+    }
+    assert.ok(exited, "process must exit non-zero on unknown subcommand");
+    assert.ok(/Unknown subcommand/i.test(stderr), `stderr should explain the failure; got: ${stderr}`);
+  });
 });

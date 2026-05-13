@@ -139,3 +139,37 @@ export function stripCommentsAndStrings(code: string): string {
 
   return out;
 }
+
+/**
+ * A `shell.openExternal(arg)` call is considered "safe" iff its first argument
+ * is a complete string literal that starts with `https://`. Anything else
+ * (variable, concatenation, non-https protocol, template literal with a
+ * `${...}` interpolation, plain http) means the URL might originate from
+ * user input and warrants validation.
+ *
+ * The three alternates cover single-quoted, double-quoted, and backtick
+ * literals. Backtick bodies are accepted ONLY when they contain no `${`
+ * interpolation; a literal `` `https://example.com` `` is safe, but a
+ * `` `https://example.com/${userInput}` `` is not.
+ */
+const SAFE_HTTPS_LITERAL_NO_INTERP = /^(?:'https:\/\/[^']*'|"https:\/\/[^"]*"|`https:\/\/(?:[^`$]|\$(?!\{))*`)\s*$/;
+
+/**
+ * Walk every `shell.openExternal(arg)` call site and return the matches whose
+ * first argument is NOT a hardcoded safe string literal. The capture group
+ * `[^,)]+` stops at the first `,` or `)`, which is enough to reach the first
+ * argument in the common shapes (`shell.openExternal(arg)` and
+ * `shell.openExternal(arg, opts)`).
+ *
+ * Callers should pass code that has already been run through `stripComments`
+ * so that mentions of `shell.openExternal` inside comments don't fire.
+ */
+export function unsafeOpenExternalCallSites(code: string): RegExpMatchArray[] {
+  return [...code.matchAll(/shell\.openExternal\s*\(\s*([^,)]+)/g)].filter(
+    (m) => !SAFE_HTTPS_LITERAL_NO_INTERP.test(m[1].trim()),
+  );
+}
+
+export function hasUnsafeOpenExternal(code: string): boolean {
+  return unsafeOpenExternalCallSites(code).length > 0;
+}

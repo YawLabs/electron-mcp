@@ -183,11 +183,12 @@ const dataDir = app.getPath("userData"); // Writable
       // Missing resources -- require a packaging-specific signal so we don't
       // attribute a generic "npm install missed a devDep" MODULE_NOT_FOUND to
       // ASAR/extraResources. Signals cover macOS bundles (`.app/Contents`),
-      // Linux/dev paths (`app.asar`, `resourcesPath`), Windows installer
-      // paths (`AppData\Local`, `Program Files`, NSIS-style `app-X.Y.Z`),
-      // and Squirrel-packaged Windows builds.
+      // dev paths (`app.asar`, `resourcesPath`), Windows installer paths
+      // (`AppData\Local`, `Program Files`, NSIS-style `app-X.Y.Z`),
+      // Squirrel-packaged Windows builds, and Linux installs (deb -> `/opt/`
+      // or `/usr/lib/`, snap -> `/snap/`, AppImage -> `/tmp/.mount_*/`).
       const looksLikePackagingIssue =
-        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents|\\AppData\\Local\\|[\\/]Program Files[\\/]|[\\/]app-\d+\.\d+\.\d+[\\/]|squirrel/i.test(
+        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents|\\AppData\\Local\\|[\\/]Program Files[\\/]|[\\/]app-\d+\.\d+\.\d+[\\/]|squirrel|[\\/]opt[\\/][^\\/]+[\\/]|[\\/]usr[\\/]lib[\\/][^\\/]+[\\/]|[\\/]snap[\\/]|[\\/]\.mount_[^\\/]+[\\/]|AppImage/i.test(
           output,
         );
       if (
@@ -904,6 +905,27 @@ After scaffolding, verify these settings:
 - [ ] Add will-navigate handler to restrict navigation
 - [ ] Add setWindowOpenHandler to control popups
 - [ ] Validate IPC sender in security-sensitive handlers`);
+
+      // ESM-vs-CJS gotcha for the generated main process. The scaffolded
+      // code uses \`__dirname\` to resolve the preload path; that works under
+      // every common Electron bundler (electron-vite, electron-forge Vite /
+      // webpack templates, electron-builder + tsc) because they inject
+      // \`__dirname\` into ESM output. A raw \`node --experimental-vm-modules\`
+      // style ESM run without a bundler does NOT define it.
+      sections.push(`## Note on \`__dirname\`
+
+The generated main process uses \`__dirname\` to resolve the preload path.
+Every common Electron bundler (electron-vite, Electron Forge with the Vite or
+webpack template, electron-builder + tsc) injects \`__dirname\` into ESM output,
+so this works as-is. If you run raw ESM Node without a bundler, replace it
+with:
+
+\`\`\`typescript
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+\`\`\`
+
+Or, on Node 20.11+, use \`import.meta.dirname\` directly.`);
 
       return sections.join("\n\n");
     },

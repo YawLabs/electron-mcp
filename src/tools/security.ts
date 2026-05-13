@@ -1,23 +1,12 @@
 import { z } from "zod";
 import { KNOWLEDGE_VERSION } from "../knowledge.js";
-import { stripComments, stripCommentsAndStrings } from "../static-analysis.js";
+import { stripComments, stripCommentsAndStrings, unsafeOpenExternalCallSites } from "../static-analysis.js";
 
 // Electron's support policy: current stable + previous two majors receive
 // security patches. Derive the supported floor from the embedded knowledge
 // vintage so advice stays accurate after a knowledge bump.
 const SUPPORTED_MIN = KNOWLEDGE_VERSION.electronStable - 2;
 const SUPPORTED_MAX = KNOWLEDGE_VERSION.electronStable;
-
-// A `shell.openExternal(arg)` call is "safe" iff its first argument is a
-// complete string literal that starts with https://. Mirrors the helper in
-// ipc.ts so the audit and lint tools agree on what counts as validated.
-const SAFE_HTTPS_LITERAL = /^['"`]https:\/\/[^'"`]*['"`]\s*$/;
-
-function unsafeOpenExternalCallSites(code: string): RegExpMatchArray[] {
-  return [...code.matchAll(/shell\.openExternal\s*\(\s*([^,)]+)/g)].filter(
-    (m) => !SAFE_HTTPS_LITERAL.test(m[1].trim()),
-  );
-}
 
 export const securityTools = [
   {
@@ -154,11 +143,24 @@ export const securityTools = [
         });
       }
 
-      // 6. CSP
-      if (html) {
-        const hasCSP = /content-security-policy/i.test(html);
-        const hasUnsafeInline = /unsafe-inline/.test(html);
-        const hasUnsafeEval = /unsafe-eval/.test(html);
+      // 6. CSP -- accept either an HTML CSP meta tag or a
+      // session.webRequest.onHeadersReceived call in main code that injects
+      // Content-Security-Policy. The session approach is what this MCP's own
+      // `electron_configure_csp` tool recommends; failing it when only
+      // mainCode is provided would punish users for following best practice.
+      const hasCspInHtml = html ? /content-security-policy/i.test(html) : false;
+      const hasCspInSession =
+        !!mainCode &&
+        /session\.[\w.]+\.webRequest\.onHeadersReceived/i.test(mainCode) &&
+        /["']Content-Security-Policy["']/i.test(mainCode);
+      // Trigger only when we actually saw a CSP signal, or when HTML was
+      // provided at all (so a missing CSP in HTML still surfaces as FAIL).
+      if (html || hasCspInSession) {
+        const hasCSP = hasCspInHtml || hasCspInSession;
+        // Unsafe-directive scan applies only to HTML; the literal value
+        // passed to onHeadersReceived isn't reliably recoverable by a regex.
+        const hasUnsafeInline = html ? /unsafe-inline/.test(html) : false;
+        const hasUnsafeEval = html ? /unsafe-eval/.test(html) : false;
         // Collect every unsafe directive present so the status reflects ALL
         // weaknesses, not just unsafe-eval. Previously unsafe-inline only
         // surfaced inside the unsafe-eval branch's message string, so a CSP
@@ -171,10 +173,12 @@ export const securityTools = [
           name: "Define a Content Security Policy",
           status: !hasCSP ? "FAIL" : unsafeDirectives.length > 0 ? "WARN" : "PASS",
           detail: !hasCSP
-            ? "No Content-Security-Policy found in HTML. Add a CSP meta tag or use session.webRequest to set CSP headers."
+            ? "No Content-Security-Policy found. Add a CSP meta tag in HTML, or set CSP headers via session.defaultSession.webRequest.onHeadersReceived in the main process."
             : unsafeDirectives.length > 0
               ? `CSP defined but contains ${unsafeDirectives.join(" and ")}. Tighten your CSP to remove ${unsafeDirectives.length > 1 ? "these directives" : "this directive"}.`
-              : "CSP is defined.",
+              : hasCspInSession && !hasCspInHtml
+                ? "CSP is set via session.webRequest.onHeadersReceived in main code. The CSP value itself isn't statically inspected -- verify it manually."
+                : "CSP is defined.",
         });
       }
 

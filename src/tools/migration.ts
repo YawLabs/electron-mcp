@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { KNOWLEDGE_VERSION } from "../knowledge.js";
 
 // Major breaking changes by Electron version
 const breakingChanges: Record<number, Array<{ change: string; migration: string; severity: string }>> = {
@@ -190,8 +191,18 @@ export const migrationTools = [
       openWorldHint: false,
     },
     inputSchema: z.object({
-      currentVersion: z.number().int().min(28).max(41).describe("Current Electron major version (e.g. 28)"),
-      targetVersion: z.number().int().min(28).max(41).describe("Target Electron major version (e.g. 41)"),
+      currentVersion: z
+        .number()
+        .int()
+        .min(KNOWLEDGE_VERSION.supportedRange.min)
+        .max(KNOWLEDGE_VERSION.supportedRange.max)
+        .describe(`Current Electron major version (e.g. ${KNOWLEDGE_VERSION.supportedRange.min})`),
+      targetVersion: z
+        .number()
+        .int()
+        .min(KNOWLEDGE_VERSION.supportedRange.min)
+        .max(KNOWLEDGE_VERSION.supportedRange.max)
+        .describe(`Target Electron major version (e.g. ${KNOWLEDGE_VERSION.supportedRange.max})`),
     }),
     handler: async (input: { currentVersion: number; targetVersion: number }) => {
       if (input.currentVersion >= input.targetVersion) {
@@ -283,10 +294,12 @@ export const migrationTools = [
         .number()
         .int()
         .optional()
-        .describe("Current Electron major version to determine what's deprecated (default: 41)"),
+        .describe(
+          `Current Electron major version to determine what's deprecated (default: ${KNOWLEDGE_VERSION.electronStable})`,
+        ),
     }),
     handler: async (input: { code: string; electronVersion?: number }) => {
-      const ver = input.electronVersion || 41;
+      const ver = input.electronVersion || KNOWLEDGE_VERSION.electronStable;
       const code = input.code;
       const found: Array<{ api: string; deprecated: number; removed?: number; replacement: string }> = [];
 

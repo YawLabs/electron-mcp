@@ -1,6 +1,11 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { stripComments, stripCommentsAndStrings } from "./static-analysis.js";
+import {
+  hasUnsafeOpenExternal,
+  stripComments,
+  stripCommentsAndStrings,
+  unsafeOpenExternalCallSites,
+} from "./static-analysis.js";
 
 describe("stripComments", () => {
   it("removes line comments while preserving code on the same line", () => {
@@ -83,5 +88,51 @@ describe("stripCommentsAndStrings", () => {
     const out = stripCommentsAndStrings("const x = `hello world`;");
     assert.ok(out.includes("``"));
     assert.ok(!out.includes("hello world"));
+  });
+});
+
+describe("unsafeOpenExternalCallSites", () => {
+  it("treats hardcoded https double-quoted literals as safe", () => {
+    const out = unsafeOpenExternalCallSites(`shell.openExternal("https://example.com");`);
+    assert.strictEqual(out.length, 0);
+  });
+
+  it("treats hardcoded https single-quoted literals as safe", () => {
+    const out = unsafeOpenExternalCallSites(`shell.openExternal('https://example.com/docs');`);
+    assert.strictEqual(out.length, 0);
+  });
+
+  it("treats interpolation-free template literals as safe", () => {
+    const out = unsafeOpenExternalCallSites("shell.openExternal(`https://example.com/docs`);");
+    assert.strictEqual(out.length, 0);
+  });
+
+  it("flags template literals that contain ${} interpolations", () => {
+    // Regression: the old regex `[^'"\`]*` allowed `$`, `{`, `}` in the body,
+    // so `\`https://example.com/${userInput}\`` matched the safe pattern and
+    // never got flagged -- the exact "URL might come from user input" class
+    // the audit is meant to catch.
+    const out = unsafeOpenExternalCallSites("shell.openExternal(`https://example.com/${userInput}`);");
+    assert.strictEqual(out.length, 1, "template literal with interpolation must be flagged");
+  });
+
+  it("flags non-https hardcoded literals", () => {
+    const out = unsafeOpenExternalCallSites(`shell.openExternal("file:///etc/passwd");`);
+    assert.strictEqual(out.length, 1);
+  });
+
+  it("flags bare-variable arguments", () => {
+    const out = unsafeOpenExternalCallSites("shell.openExternal(url);");
+    assert.strictEqual(out.length, 1);
+  });
+
+  it("flags concatenated string expressions", () => {
+    const out = unsafeOpenExternalCallSites(`shell.openExternal("https://" + domain);`);
+    assert.strictEqual(out.length, 1);
+  });
+
+  it("hasUnsafeOpenExternal mirrors unsafeOpenExternalCallSites().length > 0", () => {
+    assert.strictEqual(hasUnsafeOpenExternal(`shell.openExternal("https://example.com");`), false);
+    assert.strictEqual(hasUnsafeOpenExternal("shell.openExternal(url);"), true);
   });
 });
