@@ -19,13 +19,13 @@ One click adds this to your [mcp.hosting](https://mcp.hosting) account so it syn
 Other Electron MCP servers give your model a shell and hope. This one doesn't.
 
 - **IPC that isn't a security hole** — `electron_scaffold_ipc_channel` generates main handler + typed preload bridge + contextBridge exposure + renderer usage in one call. No `nodeIntegration: true`, no direct `ipcRenderer` on `window`.
-- **The official security recommendations, enforced** — `electron_audit_security` checks your `BrowserWindow` config, preload scripts, and CSP against all 20 items from [electronjs.org/docs/latest/tutorial/security](https://www.electronjs.org/docs/latest/tutorial/security). Not a vibe check.
+- **The official security recommendations, enforced** — `electron_audit_security` checks your `BrowserWindow` config, preload scripts, and CSP against 19 of the 20 items from [electronjs.org/docs/latest/tutorial/security](https://www.electronjs.org/docs/latest/tutorial/security) that can be verified from static inputs. (The 20th, session permission handling, needs runtime context and is flagged in the report footer.) Not a vibe check.
 - **Version-aware migration** — `electron_migrate_version` knows the breaking changes from v28 through v41 and tells you exactly what will break when you bump. `electron_check_deprecated_apis` scans your code for APIs that were removed.
 - **Build errors, explained** — `electron_diagnose_build_error` parses electron-builder/forge output and identifies root causes: Apple signing, Windows code signing, native module rebuilds, ASAR packaging, entitlements, path quoting.
 - **Modern production hardening** — `electron_configure_fuses` generates the `@electron/fuses` block for disabling unused runtime features (cookie encryption, Node CLI flags, legacy load behaviour). `electron_configure_csp` generates a CSP that actually works with your bundler and framework instead of blocking your own assets.
 - **Knowledge freshness is declared, not assumed** — every response includes a `_Knowledge last verified YYYY-MM-DD (Electron vN stable)_` footer. Call `electron_knowledge_version` to get the metadata directly. If your Electron is newer than the footer, the tool tells you.
 - **Read-only, no side effects** — every tool declares `readOnlyHint`, `destructiveHint: false`, `idempotentHint: true`, so MCP clients can skip confirmation. The tools never touch your filesystem, never run code, never call `exec`.
-- **Zero runtime dependencies** — ships as a single bundled file. No 5-minute `node_modules` install, no `electron` or `electron-builder` installed as dependencies to inflate your project.
+- **Zero runtime dependencies** — ships as a single bundled file. No 5-minute `node_modules` install, no `electron` or `electron-builder` installed as dependencies to inflate your project. The published package's `dependencies` is `{}`; Dependabot alerts on this repo are against devDependencies (the MCP SDK's optional HTTP transport surface) which the bundle doesn't include — this server uses stdio only.
 
 ## Quick start
 
@@ -99,7 +99,7 @@ Use the same JSON block shown above in any of these.
 - **electron_explain_process_model** — Version-aware explanation of Electron's multi-process architecture (main vs renderer vs utility, what lives where).
 
 ### Security (4)
-- **electron_audit_security** — Audit against all 20 official security recommendations: BrowserWindow, preload, CSP, remote content, sandbox.
+- **electron_audit_security** — Audit against 19 of the 20 official security recommendations that can be detected from static inputs: BrowserWindow, preload, CSP, remote content, sandbox. (Session permission handling is the 20th; it needs runtime context and is flagged in the report footer.)
 - **electron_configure_fuses** — Generate `@electron/fuses` config for production hardening (disable cookie encryption fallback, Node CLI flags, legacy load behaviour).
 - **electron_configure_csp** — Generate a Content Security Policy aware of your bundler (Vite/webpack/Parcel) and framework (React/Vue/Svelte).
 - **electron_lint_security** — Static analysis for dangerous patterns: `shell.openExternal` with untrusted input, `@electron/remote`, `enableBlinkFeatures`, etc.
@@ -153,7 +153,8 @@ Call `electron_knowledge_version` to get the metadata directly. When a new Elect
 ```
 > "Check my Electron app for security issues — here's my main.ts and preload.ts"
 → electron_audit_security({ mainCode: "...", preloadCode: "..." })
-  # Returns a graded report against all 20 recommendations,
+  # Returns a graded report against 19 of 20 recommendations
+  # (session permissions needs runtime context),
   # flagging nodeIntegration, missing contextIsolation,
   # unsandboxed renderers, loose CSP, and more.
 ```
