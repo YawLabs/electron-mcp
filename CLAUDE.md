@@ -44,12 +44,19 @@ Run `./release.sh <version>` or trigger from CI with a version tag.
 
 ## Dependency overrides
 
-`package.json` has an `overrides` block pinning `hono` and `@hono/node-server`. These are **transitive dependencies of `@modelcontextprotocol/sdk`**, not direct deps — the SDK's HTTP transport uses Hono internally. The overrides keep our install tree on versions without known CVEs and prevent an older transitive Hono from being hoisted in.
+`package.json` has an `overrides` block pinning four **transitive dependencies of `@modelcontextprotocol/sdk`** to versions that patch published CVEs:
 
-Before dropping or bumping these:
+- `hono` and `@hono/node-server` — the SDK's HTTP transport uses Hono internally
+- `fast-uri` — used by `ajv` for URI validation in JSON Schema
+- `ip-address` — used by `express-rate-limit` (transitive of the SDK's HTTP transport)
 
-1. Check the SDK's current peer range (`npm ls hono` in a fresh install).
-2. Confirm there's no active advisory against the target version.
-3. Re-run the full test suite, including integration.
+Without these overrides, npm would resolve the SDK's transitive tree to older versions with known advisories that GitHub Dependabot flags on the default branch.
 
-The bundled `dist/index.js` does not ship Hono because we only use the stdio transport, but the overrides still affect the install graph and any devtime use of the SDK's HTTP transport.
+Before dropping or bumping any of these:
+
+1. Check the SDK's current peer range for the package (`npm view @modelcontextprotocol/sdk@<version> dependencies`).
+2. Check the direct-parent package's range (`npm view <parent>@<version> dependencies`) to confirm the override target is within the accepted range -- a too-new override version can break npm's resolution.
+3. Confirm there's no active advisory against the target version.
+4. Re-run the full test suite, including integration.
+
+The bundled `dist/index.js` does not ship Hono / fast-uri / ip-address because we only use the stdio transport (which doesn't pull them in), so end users installing via `npx @yawlabs/electron-mcp` are unaffected by the underlying CVEs regardless. The overrides exist to keep the dev install graph clean so Dependabot doesn't flag the repo and so any devtime use of the SDK's HTTP transport is safe too.
