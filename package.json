@@ -1,6 +1,6 @@
 {
   "name": "@yawlabs/electron-mcp",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Electron.js MCP server — IPC scaffolding, security auditing, build tooling, and development intelligence for AI assistants",
   "license": "MIT",
   "author": "YawLabs <contact@yaw.sh>",
@@ -35,11 +35,11 @@
     "build": "tsc && node build.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test dist/",
+    "test": "npm run build && node --test dist/static-analysis.test.js dist/integration.test.js dist/tools/tools.test.js",
     "test:ci": "npm run test",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
-    "prepublishOnly": "npm run build && node --test dist/"
+    "prepublishOnly": "npm run build && node --test dist/static-analysis.test.js dist/integration.test.js dist/tools/tools.test.js"
   },
   "dependencies": {},
   "overrides": {
