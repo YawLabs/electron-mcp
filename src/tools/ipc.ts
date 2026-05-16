@@ -552,7 +552,7 @@ declare global {
               .string()
               .regex(
                 /^[A-Za-z_][\w-]*$/,
-                "id must start with a letter or underscore and contain only letters, digits, underscores, or hyphens (used as an object key in generated code)",
+                "id must start with a letter or underscore and contain only letters, digits, underscores, or hyphens",
               )
               .describe("Unique window identifier, e.g. 'main', 'settings', 'about'"),
             title: z.string().describe("Window title"),
@@ -562,11 +562,15 @@ declare global {
               .enum(["normal", "modal", "panel"])
               .optional()
               .describe("Window type: normal (default), modal (blocks parent), or panel (always-on-top utility)"),
+            // `\n\r\u2028\u2029` covers every Unicode line terminator. The last
+            // two were string-literal line terminators pre-ES2019 and could
+            // close an emitted template early; ES2019+ removed that, so on
+            // Node 20+ this is belt-and-braces.
             url: z
               .string()
               .regex(
-                /^[^"`\\$\n\r]*$/,
-                "url must not contain double quotes, backticks, backslashes, $, or newlines (interpolated into a template literal and a string literal in generated code)",
+                /^[^"`\\$\n\r\u2028\u2029]*$/,
+                "url must not contain double quotes, backticks, backslashes, $, or line terminators",
               )
               .optional()
               .describe("URL or file path to load, e.g. '/settings.html' or '/index.html#/settings'"),

@@ -374,6 +374,28 @@ describe("electron_generate_window_manager", () => {
     );
   });
 
+  it("emits valid JS even for titles containing the Unicode line terminators U+2028 / U+2029", async () => {
+    // Regression-resistance: JSON.stringify on Node 10+ escapes these as
+    // \u2028 / \u2029, but the test pins the actual property: the emitted
+    // configs object must parse as a real JS expression. If a future
+    // refactor swapped JSON.stringify for a custom escaper that missed
+    // these code points, the emitted source would break (pre-ES2019) or at
+    // minimum embed raw line terminators into the property value.
+    const result = await tool({
+      windows: [{ id: "main", title: "A\u2028B\u2029C" }],
+    });
+    // Pull the configs object literal out of the generated source and
+    // confirm it parses. `new Function("return ({" + body + "});")` is the
+    // simplest "does this object literal compile?" check available.
+    const match = result.match(/private configs:[^=]*=\s*\{([\s\S]*?)\n\s*\};/);
+    assert.ok(match, `could not locate configs object in output:\n${result}`);
+    const body = match[1];
+    assert.doesNotThrow(
+      () => new Function(`return ({${body}});`),
+      `emitted configs object must be syntactically valid JS; got body:\n${body}`,
+    );
+  });
+
   it("rejects window ids that could break or inject into generated code", () => {
     // Regression: window.id is interpolated unescaped into generated source
     // (configs object key, parent lookup, loadCases). An id containing a

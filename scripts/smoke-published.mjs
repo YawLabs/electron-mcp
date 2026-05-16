@@ -21,7 +21,16 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const require = createRequire(import.meta.url);
 const { version: localVersion } = require("../package.json");
-const VERSION = process.env.SMOKE_VERSION ?? localVersion;
+
+// `??` only falls back on null/undefined, so SMOKE_VERSION="" (a common typo
+// from a shell variable that didn't expand) would land on the regex below
+// as an empty string and surface a confusing "Invalid SMOKE_VERSION" error.
+// Treat empty-string identically to unset and log the substitution.
+let VERSION = process.env.SMOKE_VERSION ?? localVersion;
+if (process.env.SMOKE_VERSION === "") {
+  console.log(`  SMOKE_VERSION is empty; falling back to local package.json (${localVersion})`);
+  VERSION = localVersion;
+}
 
 // Validate before we hand `VERSION` to a shell. Without this guard, a value
 // like `1.0.0; rm -rf ~` interpolated into the `npm install ${PKG}` argv
