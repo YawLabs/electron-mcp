@@ -59,10 +59,14 @@ export const performanceTools = [
           "sqlite3",
           "better-sqlite3",
           "canvas",
+          "@napi-rs/canvas",
+          "node-canvas-prebuilt",
           "puppeteer",
           "playwright",
           "ffmpeg",
           "jimp",
+          "onnxruntime-node",
+          "@tensorflow/tfjs-node",
         ];
         for (const mod of heavyModules) {
           const m = escapeRegex(mod);

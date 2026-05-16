@@ -10,13 +10,9 @@ import { migrationTools } from "./tools/migration.js";
 import { performanceTools } from "./tools/performance.js";
 import { referenceTools } from "./tools/reference.js";
 import { securityTools } from "./tools/security.js";
+import { resolveVersion } from "./version.js";
 
-// Injected at build time by esbuild; falls back to reading package.json for tsc builds.
-declare const __VERSION__: string | undefined;
-const version =
-  typeof __VERSION__ !== "undefined"
-    ? __VERSION__
-    : ((await import("node:module")).createRequire(import.meta.url)("../package.json") as { version: string }).version;
+const version = resolveVersion();
 
 // ─── CLI subcommands (run instead of MCP server) ───
 

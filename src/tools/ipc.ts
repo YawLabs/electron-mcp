@@ -580,6 +580,13 @@ declare global {
     }) => {
       const persist = input.persistState !== false;
 
+      // Pick the modal parent at codegen time, not "main"-by-convention.
+      // The previous code hardcoded `this.windows.get("main")`, which silently
+      // produced parent-less modals whenever the user's windows array didn't
+      // include a window named "main" -- or, worse, when "main" itself was
+      // the modal-typed window.
+      const parentId = input.windows.find((w) => (w.type || "normal") !== "modal")?.id;
+
       const windowConfigs = input.windows
         .map((w) => {
           const type = w.type || "normal";
@@ -707,9 +714,15 @@ ${stateCode}
     // Modal windows need a live parent reference. configs is a static class
     // field, so we can't bake the parent in there -- resolve it here, at the
     // moment the modal is opened, from the current windows map.
-    if (config.modal && id !== "main") {
-      const parent = this.windows.get("main");
+    ${
+      parentId
+        ? `if (config.modal && id !== "${parentId}") {
+      const parent = this.windows.get("${parentId}");
       if (parent && !parent.isDestroyed()) opts.parent = parent;
+    }`
+        : `// No non-modal window in the config -- modal windows will open without
+    // a parent. If you want modal-with-parent behavior, add a non-modal
+    // anchor window (e.g. id: "main", type: "normal") to your config.`
     }${stateRestore}
 
     const win = new BrowserWindow(opts);

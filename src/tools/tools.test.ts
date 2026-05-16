@@ -309,6 +309,42 @@ describe("electron_generate_window_manager", () => {
       "createWindow must resolve the modal parent at call time from the live windows map",
     );
   });
+
+  it("modal parent uses the first non-modal window's id, not hardcoded 'main'", async () => {
+    // Regression: the modal-parent lookup was hardcoded to `this.windows.get("main")`,
+    // so a config without a window named "main" produced parent-less modals.
+    const result = await tool({
+      windows: [
+        { id: "dashboard", title: "Dashboard" },
+        { id: "preferences", title: "Preferences", type: "modal" },
+      ],
+    });
+    assert.ok(
+      /this\.windows\.get\(['"]dashboard['"]\)/.test(result),
+      `parent lookup should pick the first non-modal id ('dashboard'); got:\n${result}`,
+    );
+    assert.ok(
+      !/this\.windows\.get\(['"]main['"]\)/.test(result),
+      `parent lookup must not reference 'main' when no such window exists; got:\n${result}`,
+    );
+  });
+
+  it("emits a no-parent fallback comment when every window is modal", async () => {
+    const result = await tool({
+      windows: [
+        { id: "dialog-a", title: "A", type: "modal" },
+        { id: "dialog-b", title: "B", type: "modal" },
+      ],
+    });
+    assert.ok(
+      /No non-modal window in the config/.test(result),
+      `all-modal config must emit the no-parent comment; got:\n${result}`,
+    );
+    assert.ok(
+      !/this\.windows\.get\(['"][^'"]+['"]\)/.test(result.split("createWindow(id: string)")[1] ?? ""),
+      `all-modal config must not emit a parent lookup; got:\n${result}`,
+    );
+  });
 });
 
 describe("electron_explain_process_model", () => {
@@ -722,6 +758,34 @@ describe("electron_lint_security", () => {
 describe("electron_diagnose_build_error", () => {
   const tool = byName("electron_diagnose_build_error");
 
+  it("does NOT classify a generic MODULE_NOT_FOUND as packaging when no path signal is present", async () => {
+    // Regression: the Squirrel signal previously matched the bare word
+    // "squirrel" anywhere in the output. A dependency name or unrelated
+    // mention should not trip the packaging classifier on its own; the
+    // signal is only meaningful in a path-like context.
+    const result = await tool({
+      errorOutput: "Error: Cannot find module 'squirrel-helpers'\nMODULE_NOT_FOUND",
+      buildTool: "electron-builder",
+    });
+    assert.ok(
+      !result.includes("Missing file or module in packaged app"),
+      `bare 'squirrel' mention without a path context must not trigger the packaging classifier; got:\n${result}`,
+    );
+  });
+
+  it("DOES classify Squirrel-packaged Windows path with MODULE_NOT_FOUND", async () => {
+    const result = await tool({
+      errorOutput:
+        "Error: Cannot find module 'foo'\nMODULE_NOT_FOUND\n   at C:\\Users\\me\\AppData\\Local\\myapp\\Squirrel.exe",
+      buildTool: "electron-builder",
+      platform: "win32",
+    });
+    assert.ok(
+      result.includes("Missing file or module in packaged app"),
+      `path-context Squirrel match should trigger the packaging classifier; got:\n${result}`,
+    );
+  });
+
   it("identifies macOS code signing identity errors", async () => {
     const result = await tool({
       errorOutput: "Error: Code signing failed -- no signing identity found for Developer ID Application",
@@ -1056,6 +1120,17 @@ describe("electron_audit_performance", () => {
     });
     assert.ok(result.includes("sharp"));
     assert.ok(result.includes("Eager") || result.includes("lazy"));
+  });
+
+  it("flags eager top-level import of ML/native-bindings heavy modules", async () => {
+    // Coverage for additions to the heavyModules list: onnxruntime-node,
+    // @tensorflow/tfjs-node, @napi-rs/canvas, node-canvas-prebuilt.
+    for (const mod of ["onnxruntime-node", "@tensorflow/tfjs-node", "@napi-rs/canvas", "node-canvas-prebuilt"]) {
+      const result = await tool({
+        mainCode: `import x from "${mod}";\napp.whenReady().then(() => {});`,
+      });
+      assert.ok(result.includes(mod), `${mod} should be flagged as eager-loaded; got:\n${result}`);
+    }
   });
 
   it("flags synchronous fs in main process", async () => {
