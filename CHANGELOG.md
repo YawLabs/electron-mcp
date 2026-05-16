@@ -51,11 +51,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.2.3] - 2026-05-13
 
-### Infrastructure
-
-- Test scripts switched from `node --test dist/` to an explicit file list (`dist/static-analysis.test.js dist/integration.test.js dist/tools/tools.test.js`). Node 22's directory-mode test runner discovers any `.test.*`-suffixed file AND treats `index.js` as a discoverable test entry, so on Node 22 the package's own `dist/index.js` was being spawned during the test run and hung waiting for stdio. The explicit list pins exactly what runs and works identically across Node 20 and 22.
-
-## [1.2.2] - 2026-05-13
+> Note: 1.2.2 was bumped locally but never tagged or published -- the test-script issue below was caught before the tag push, so 1.2.3 shipped both the full-pass audit follow-ups originally intended for 1.2.2 AND the test-script fix.
 
 ### Fixed
 
@@ -72,6 +68,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Infrastructure
 
 - `unsafeOpenExternalCallSites()` and `hasUnsafeOpenExternal()` extracted to `src/static-analysis.ts`. Both `electron_audit_ipc_security` and `electron_lint_security` previously had their own copies of the safe-URL detection logic; the dedup prevents the two from drifting (which is how the template-literal `${...}` bug above existed in both places).
+- Test scripts switched from `node --test dist/` to an explicit file list (`dist/static-analysis.test.js dist/integration.test.js dist/tools/tools.test.js`). Node 22's directory-mode test runner discovers any `.test.*`-suffixed file AND treats `index.js` as a discoverable test entry, so on Node 22 the package's own `dist/index.js` was being spawned during the test run and hung waiting for stdio. The explicit list pins exactly what runs and works identically across Node 20 and 22.
 - Regression tests for every fix in this release, plus a new `static-analysis.test.ts` describe block pinning the safe/unsafe contract of `hasUnsafeOpenExternal` (8 cases: hardcoded https double / single / template literal, template with interpolation, non-https literal, bare variable, concatenated expression, mirror against the call-sites variant).
 
 ## [1.2.1] - 2026-05-06
