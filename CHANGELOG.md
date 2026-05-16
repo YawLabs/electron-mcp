@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-05-16
+
+### Fixed
+
+- `electron_generate_window_manager` `url` schema now blocks U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR) in addition to LF/CR. Pre-ES2019 these were string-literal line terminators that could close an emitted template literal early; ES2019+ removed that, so on Node 20+ (the engines field minimum) this is belt-and-braces.
+
+### Changed
+
+- `electron_generate_window_manager` schema validation messages trimmed -- dropped the "(used in generated code)" parentheticals on `id` and `url`. The messages now name what's allowed/blocked without leaking codegen internals to the MCP client.
+- `scripts/smoke-published.mjs` now treats `SMOKE_VERSION=""` (a common shell typo from an unexpanded variable) identically to unset -- falls back to the local `package.json` version with a clear log instead of erroring out with a confusing "Invalid SMOKE_VERSION".
+
+### Infrastructure
+
+- New brittleness-resistant title-escape regression test: round-trips a title containing U+2028 / U+2029 through the generator and parses the emitted configs object via `new Function("return ({" + body + "});")`. Catches any future generator change that misses these code points, regardless of which escaper is used.
+- Full suite: 146/146.
+
 ## [1.2.7] - 2026-05-16
 
 ### Fixed
