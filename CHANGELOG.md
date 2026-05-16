@@ -6,9 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-05-16
+
+### Fixed
+
+- `electron_generate_window_manager` now validates each window's `id` against `/^[A-Za-z_][\w-]*$/` at the schema layer. The id is interpolated unescaped into three places in the generated code (configs object key, parent lookup, `loadCases` switch); an id with quotes, backslashes, or newlines could have broken the output or smuggled code. The schema constraint closes all three sites in one shot.
+- `electron_diagnose_build_error` Squirrel boundary tightened from `(?:[\\/]|^)Squirrel[.:\\/-]` to `[\\/]Squirrel[.:\\/-]|^Squirrel:`. The earlier form's `^` alternative + `-` suffix still matched a `squirrel-helpers` line at start-of-line; the new boundary requires an actual path separator, and the start-of-line case is reserved for the runtime's `Squirrel:` log prefix.
+- `electron_audit_security` check #19 and `electron_audit_ipc_security` sender-validation regex appends `\b` after `url|origin` so properties like `senderFrame.urlPath` / `senderFrame.originX` don't false-PASS the check.
+
+### Changed
+
+- `scripts/smoke-published.mjs` validates `SMOKE_VERSION` against `/^[\w.+-]+$/` before interpolating into the `npm install` argv. With `shell: true`, a value like `1.0.0; rm -rf ~` would have executed the rm half.
+
 ### Added
 
 - `scripts/smoke-published.mjs` (run via `npm run smoke:published`) installs the npm package into a fresh tempdir, connects to the MCP server over stdio, and asserts a handful of representative behaviors (tool count + prefixing, `audit_security` flags `nodeIntegration: true`, knowledge footer injection, `knowledge_version` advertises the v28-v41 range, `check_deprecated_apis` respects `electronVersion`). Goes beyond release.yml's `--version` smoke -- if a tool file is dropped by esbuild or the SDK wire contract breaks, this catches it. `SMOKE_VERSION` env var lets you smoke an older release.
+
+### Infrastructure
+
+- 3 new regression tests covering items above. Full suite: 142/142.
 
 ## [1.2.5] - 2026-05-16
 
