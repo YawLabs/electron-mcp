@@ -6,6 +6,74 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/smoke-published.mjs` (run via `npm run smoke:published`) installs the npm package into a fresh tempdir, connects to the MCP server over stdio, and asserts a handful of representative behaviors (tool count + prefixing, `audit_security` flags `nodeIntegration: true`, knowledge footer injection, `knowledge_version` advertises the v28-v41 range, `check_deprecated_apis` respects `electronVersion`). Goes beyond release.yml's `--version` smoke -- if a tool file is dropped by esbuild or the SDK wire contract breaks, this catches it. `SMOKE_VERSION` env var lets you smoke an older release.
+
+## [1.2.5] - 2026-05-16
+
+### Fixed
+
+- `electron_audit_security` check #19 (IPC sender validation) no longer reports PASS when code merely mentions `event.sender` -- the old regex matched `event.sender.send(...)`, which is the opposite of validation. Now requires an actual origin read (`senderFrame.url`, `senderFrame.origin`, or `sender.getURL()`). `electron_audit_ipc_security` has the same tightening.
+- `electron_audit_performance` unbundled-deps check no longer false-positives on Electron Forge setups. Forge's Vite and webpack plugins (`@electron-forge/plugin-vite`, `@electron-forge/plugin-webpack`) bundle main + preload under the hood but weren't recognized as bundler signals; rollup and parcel were also missed. All four are now accepted.
+- `electron_lint_security` with `fileType: "preload"` now references `electron_audit_ipc_security` in its report. The lint only checks one preload pattern (full-module exposure via `contextBridge`); the richer preload checks (raw `ipcRenderer`, missing sender validation, listener leaks, direct `window.*` assignment) live in the IPC audit tool. A CLEAN here is no longer mistaken for a comprehensive preload bill of health.
+- `electron_check_deprecated_apis` now filters by `electronVersion`. A v28 user calling `session.loadExtension()` (deprecated v36) no longer gets flagged for an API that's still supported on their version.
+- `electron_diagnose_build_error` no longer false-matches the bare word `squirrel` in unrelated identifiers like a `squirrel-helpers` npm package. The Squirrel signal now requires path-context (`/Squirrel.`, `\Squirrel\`, `Squirrel.exe`) or the runtime's log prefix (start-of-string `Squirrel:`).
+- `electron_generate_window_manager` modal windows no longer default to a parent of `this.windows.get("main")`. Configs without a window literally named `main` (or where `main` itself is the modal) previously got parent-less modals. The generator now picks the first non-modal window's id at codegen time; when every window is modal, it emits an explicit no-parent comment instead of a broken lookup.
+- `electron_audit_performance` `heavyModules` detector extended to cover ML and additional native-bindings packages: `onnxruntime-node`, `@tensorflow/tfjs-node`, `@napi-rs/canvas`, `node-canvas-prebuilt`. Eager top-level imports of these now flag as expected.
+- `electron_migrate_version` breaking-changes data refreshed against electronjs.org/docs/latest/breaking-changes: v28 `setTrafficLightPosition` corrected from "renamed" to "removed (replaced by `setWindowButtonPosition`)" with severity bumped MEDIUM; misplaced v28 `WebContentsView replaces BrowserView` entry removed (deprecation actually landed in v30, already present); renderer-clipboard deprecation moved from v38 to v40 (the real deprecation version); v40 entry wording corrected from "fully removed" to "deprecated (will be removed in a future version)"; matching update to the `deprecatedApis` table.
+- `electron_diagnose_build_error` recommended Visual Studio Build Tools workload directly instead of `npm install --global windows-build-tools`. The npm package was deprecated by its author years ago and emits a deprecation warning on install.
+
+### Changed
+
+- `src/version.ts` extracted from `src/index.ts`. The tsc-path version fallback (`createRequire(import.meta.url)("../package.json")`) is now unit-tested via `src/version.test.ts`. Previously the fallback was dead from a test perspective because the integration test always loads the esbuild bundle where `__VERSION__` is defined.
+
+### Infrastructure
+
+- 14 new regression tests across the changes above. Full suite: 139/139 across `static-analysis.test.js`, `integration.test.js`, `version.test.js`, and `tools/tools.test.js`.
+
+## [1.2.4] - 2026-05-15
+
+### Added
+
+- Automatic publishing to the Official MCP Registry (registry.modelcontextprotocol.io) via OIDC on every release. `server.json` + `mcpName` metadata added; `release.yml` gains four steps (resolve npm publisher, mint OIDC token, push to the registry, verify) that fire after the npm publish succeeds.
+
+### Infrastructure
+
+- `release.yml` smoke test reworked. The previous form gated on `npm view` then ran `npx -y --version`; the two calls hit different CDN paths so `npm view` could clear while `npx` still ETARGETed on a stale mirror. Now retries the actual `npx -y @yawlabs/electron-mcp@${VERSION} --version` call directly with 30 x 10s budget (~5 min upper bound, typical < 30s). Pattern mirrors aws-mcp / tailscale-mcp.
+- New `.github/workflows/deprecate.yml` (manually triggered). Uses the org `NPM_TOKEN` exactly like `release.yml` so deprecation runs don't depend on a local WebAuthn session. Inputs pass through env vars (not `${{ }}` interpolation in the run script) to prevent argv injection. Shares the `release-npm` concurrency group with `release.yml` so a deprecate run can't collide with a concurrent publish. Verify step retries `npm view` for ~3 min to outlast CDN propagation.
+- `package.json` overrides bumped to clear Dependabot CVEs in transitive `@modelcontextprotocol/sdk` dependencies: `hono` 4.12.14 -> 4.12.18 (JWT NumericDate, JSX SSR CSS injection, cache Vary handling), `fast-uri` pinned `>=3.1.2` (host confusion via percent-encoded authority, path traversal via percent-encoded dot segments), `ip-address` pinned `>=10.2.0` (XSS in Address6 HTML-emitting methods). End users via `npx` are unaffected -- `dist/index.js` ships zero runtime deps and uses only the stdio transport; this is dev-graph hygiene.
+
+### Documentation
+
+- README "all 20 official security recommendations" tightened to "19 of the 20 that can be verified from static inputs"; the 20th (session permission handling) needs runtime context and is already flagged in the report footer. Updated in tagline, Tools list, and Examples block.
+- README "Zero runtime dependencies" bullet expanded to explain that the published package's `dependencies` is `{}` and any open Dependabot alerts are against devDependencies (the SDK's optional HTTP transport surface) which the bundle does not include. Preempts the "I see 7 high CVEs" question on the repo page.
+
+## [1.2.3] - 2026-05-13
+
+### Infrastructure
+
+- Test scripts switched from `node --test dist/` to an explicit file list (`dist/static-analysis.test.js dist/integration.test.js dist/tools/tools.test.js`). Node 22's directory-mode test runner discovers any `.test.*`-suffixed file AND treats `index.js` as a discoverable test entry, so on Node 22 the package's own `dist/index.js` was being spawned during the test run and hung waiting for stdio. The explicit list pins exactly what runs and works identically across Node 20 and 22.
+
+## [1.2.2] - 2026-05-13
+
+### Fixed
+
+- `electron_audit_ipc_security` and `electron_lint_security` `shell.openExternal` checks now reject backtick template literals containing `${...}` interpolations. The previous `SAFE_HTTPS_LITERAL` regex used `[^'"`]*` for the body, which silently accepted `` `https://example.com/${userInput}` `` -- exactly the "URL composed from user input" pattern the audit is meant to catch.
+- `electron_audit_security` check #6 (CSP) now treats `session.*.webRequest.onHeadersReceived` writing a `Content-Security-Policy` header in main code as a valid CSP source. Previously the check only inspected HTML; projects following this MCP's own `electron_configure_csp` recommendation (which uses the session approach) were failing the check whenever HTML wasn't also provided.
+- `electron_diagnose_build_error` packaging-issue gate extended to Linux install paths. A `MODULE_NOT_FOUND` from a deb-installed app (`/opt/<app>/`, `/usr/lib/<app>/`), snap (`/snap/`), or AppImage (`/tmp/.mount_*/` or the `AppImage` keyword) is now classified as packaging instead of the generic fallback.
+- `index.ts` now rejects unknown subcommands with a non-zero exit and a usage message. A typo like `electron-mcp versoin` previously fell through to the MCP server, which blocks on stdio and looks indistinguishable from a hang.
+
+### Changed
+
+- `migration.ts` schema bounds and the `electron_check_deprecated_apis` default version now derive from `KNOWLEDGE_VERSION.supportedRange` / `.electronStable` instead of hardcoded 28/41. Bumping the knowledge constant in one place propagates to both the migration tool's accepted version range and the deprecated-API scanner's default.
+- `electron_scaffold_project` now emits a `## Note on __dirname` section in the generated main-process file explaining the bundler-vs-raw-ESM caveat (`__dirname` is provided by the bundler but does not exist in raw ESM). Heads off a common scaffold-then-strip-the-bundler confusion.
+
+### Infrastructure
+
+- `unsafeOpenExternalCallSites()` and `hasUnsafeOpenExternal()` extracted to `src/static-analysis.ts`. Both `electron_audit_ipc_security` and `electron_lint_security` previously had their own copies of the safe-URL detection logic; the dedup prevents the two from drifting (which is how the template-literal `${...}` bug above existed in both places).
+- Regression tests for every fix in this release, plus a new `static-analysis.test.ts` describe block pinning the safe/unsafe contract of `hasUnsafeOpenExternal` (8 cases: hardcoded https double / single / template literal, template with interpolation, non-https literal, bare variable, concatenated expression, mirror against the call-sites variant).
+
 ## [1.2.1] - 2026-05-06
 
 ### Infrastructure
