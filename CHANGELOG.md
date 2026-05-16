@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-05-16
+
+### Fixed
+
+- `electron_generate_window_manager` window `title` is now JSON-escaped before being interpolated into the generated config object. The previous form (`title: "${w.title}",`) broke or could smuggle code if the title contained `"`, `\`, or `\n`. JSON.stringify preserves the user's text verbatim.
+- `electron_generate_window_manager` `url` field now constrained at the schema layer to reject `"`, backtick, `\`, `$`, and newlines. The url is interpolated unescaped into two places in the emitted `loadCases` -- once inside a template literal (`\`${DEV_URL}${url}\``) and once inside a string literal (`"../renderer${url}"`); the schema constraint closes both injection paths.
+
+### Changed
+
+- `scripts/smoke-published.mjs` SMOKE_VERSION regex tightened from `/^[\w.+-]+$/` to `/^[\w.+][\w.+-]*$/`. The earlier form allowed leading-dash values like `--registry=http://attacker` -- still a single argv token, but a flag-shaped one that `npm install` would parse as an argument rather than a version spec.
+
+### Infrastructure
+
+- 3 new regression tests. Full suite: 145/145.
+
 ## [1.2.6] - 2026-05-16
 
 ### Fixed
