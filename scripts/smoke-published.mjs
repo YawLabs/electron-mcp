@@ -28,8 +28,12 @@ const VERSION = process.env.SMOKE_VERSION ?? localVersion;
 // below would actually execute the rm half. The check accepts the npm-version
 // character set (digits, letters, dots, dashes, underscores, plus) and
 // rejects anything else -- spaces, quotes, shell metacharacters, newlines.
-if (!/^[\w.+-]+$/.test(VERSION)) {
-  console.error(`Invalid SMOKE_VERSION: ${JSON.stringify(VERSION)} -- must match /^[\\w.+-]+$/`);
+//
+// First char must NOT be `-`: otherwise `--registry=http://attacker` would
+// pass (single argv token, but a flag-shaped one that npm would parse as an
+// argument rather than a version spec).
+if (!/^[\w.+][\w.+-]*$/.test(VERSION)) {
+  console.error(`Invalid SMOKE_VERSION: ${JSON.stringify(VERSION)} -- must match /^[\\w.+][\\w.+-]*$/`);
   process.exit(2);
 }
 const PKG = `@yawlabs/electron-mcp@${VERSION}`;

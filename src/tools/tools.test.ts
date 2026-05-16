@@ -346,6 +346,34 @@ describe("electron_generate_window_manager", () => {
     );
   });
 
+  it("escapes window titles so a value with quotes / backslashes / newlines can't break the emitted source", async () => {
+    // Regression: title was previously interpolated as `title: "${w.title}",`
+    // -- a title containing `"` would break the object literal, and `\` or `\n`
+    // could land injectable code. JSON.stringify preserves the value verbatim
+    // and escapes anything that needs escaping.
+    const result = await tool({
+      windows: [{ id: "main", title: 'My "Quoted" \\App\nNewline' }],
+    });
+    // The emitted line must be valid JS: `title: "...escaped..."`
+    // JSON.stringify produces `"My \"Quoted\" \\App\nNewline"` -- the test
+    // checks the escape sequences are present (proof the raw quotes don't
+    // leak into the generated source).
+    assert.ok(
+      /title:\s*"My \\"Quoted\\" \\\\App\\nNewline"/.test(result),
+      `title with quotes/backslashes/newlines must be JSON-escaped; got:\n${result}`,
+    );
+  });
+
+  it("preserves simple titles verbatim under JSON-escaping (no double-quoting)", async () => {
+    const result = await tool({
+      windows: [{ id: "main", title: "Main" }],
+    });
+    assert.ok(
+      /title:\s*"Main",/.test(result),
+      `simple title must round-trip as "Main", not double-quoted; got:\n${result}`,
+    );
+  });
+
   it("rejects window ids that could break or inject into generated code", () => {
     // Regression: window.id is interpolated unescaped into generated source
     // (configs object key, parent lookup, loadCases). An id containing a
@@ -361,6 +389,30 @@ describe("electron_generate_window_manager", () => {
     for (const id of ["main", "settings", "about", "dialog-a", "_internal", "Window2"]) {
       const parsed = schema.safeParse({ windows: [{ id, title: "X" }] });
       assert.strictEqual(parsed.success, true, `schema should accept id ${JSON.stringify(id)}`);
+    }
+  });
+
+  it("rejects window urls that could break or inject into generated code", () => {
+    // Regression: url is interpolated unescaped into the emitted loadCases
+    // -- once inside a template literal (`\`${DEV_URL}${url}\``) and once
+    // inside a string literal (`"../renderer${url}"`). The schema now
+    // rejects the characters that could break either context.
+    const schema = schemaOf("electron_generate_window_manager");
+    const bad = [
+      '/foo"; evil(); //', // breaks the string literal
+      "/foo`; evil(); //", // breaks the template literal
+      "/${process.env.SECRET}", // template interpolation injection
+      "/foo\\nstuff", // raw newline
+      "/foo\\bar", // raw backslash
+    ];
+    for (const url of bad) {
+      const parsed = schema.safeParse({ windows: [{ id: "main", title: "X", url }] });
+      assert.strictEqual(parsed.success, false, `schema should reject url ${JSON.stringify(url)}`);
+    }
+    // Sanity: common URL paths still accepted.
+    for (const url of ["/", "/index.html", "/settings.html?foo=bar", "/index.html#/settings", "/p/123"]) {
+      const parsed = schema.safeParse({ windows: [{ id: "main", title: "X", url }] });
+      assert.strictEqual(parsed.success, true, `schema should accept url ${JSON.stringify(url)}`);
     }
   });
 });

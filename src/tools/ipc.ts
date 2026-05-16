@@ -564,6 +564,10 @@ declare global {
               .describe("Window type: normal (default), modal (blocks parent), or panel (always-on-top utility)"),
             url: z
               .string()
+              .regex(
+                /^[^"`\\$\n\r]*$/,
+                "url must not contain double quotes, backticks, backslashes, $, or newlines (interpolated into a template literal and a string literal in generated code)",
+              )
               .optional()
               .describe("URL or file path to load, e.g. '/settings.html' or '/index.html#/settings'"),
           }),
@@ -597,8 +601,11 @@ declare global {
       const windowConfigs = input.windows
         .map((w) => {
           const type = w.type || "normal";
+          // JSON.stringify on the title so a value containing `"`, `\`, or `\n`
+          // can't break the emitted source (or smuggle code into it).
+          // `width` / `height` are numeric via the schema -- safe to interpolate.
           const opts: string[] = [
-            `      title: "${w.title}",`,
+            `      title: ${JSON.stringify(w.title)},`,
             `      width: ${w.width || 800},`,
             `      height: ${w.height || 600},`,
           ];
