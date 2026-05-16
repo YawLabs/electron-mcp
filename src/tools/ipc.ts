@@ -456,10 +456,11 @@ declare global {
         // Check for missing sender validation. Require an actual origin read
         // (senderFrame.url/origin or sender.getURL()) rather than any mention
         // of `event.sender` -- the latter matches `event.sender.send(...)`,
-        // which is the opposite of validation.
+        // which is the opposite of validation. The `\b` after `url|origin`
+        // prevents accidental matches on properties like `senderFrame.urlPath`.
         if (
           /ipcMain\.(handle|on)\s*\(/.test(code) &&
-          !/senderFrame\s*\.\s*(?:url|origin)|sender\s*\.\s*getURL\s*\(/.test(code)
+          !/senderFrame\s*\.\s*(?:url|origin)\b|sender\s*\.\s*getURL\s*\(/.test(code)
         ) {
           findings.push({
             severity: "MEDIUM",
@@ -547,7 +548,13 @@ declare global {
       windows: z
         .array(
           z.object({
-            id: z.string().describe("Unique window identifier, e.g. 'main', 'settings', 'about'"),
+            id: z
+              .string()
+              .regex(
+                /^[A-Za-z_][\w-]*$/,
+                "id must start with a letter or underscore and contain only letters, digits, underscores, or hyphens (used as an object key in generated code)",
+              )
+              .describe("Unique window identifier, e.g. 'main', 'settings', 'about'"),
             title: z.string().describe("Window title"),
             width: z.number().optional().describe("Window width in pixels (default 800)"),
             height: z.number().optional().describe("Window height in pixels (default 600)"),

@@ -357,9 +357,11 @@ export const securityTools = [
       // 19. IPC sender validation
       // Look for actual origin reads (senderFrame.url/origin or sender.getURL()),
       // not just any mention of `event.sender` -- the latter matches
-      // `event.sender.send(...)` which is the OPPOSITE of validation.
+      // `event.sender.send(...)` which is the OPPOSITE of validation. The `\b`
+      // after `url|origin` prevents matching on properties like
+      // `senderFrame.urlPath`.
       if (mainCode && /ipcMain\.(handle|on)\s*\(/.test(mainCode)) {
-        const hasGuard = /senderFrame\s*\.\s*(?:url|origin)|sender\s*\.\s*getURL\s*\(/.test(mainCode);
+        const hasGuard = /senderFrame\s*\.\s*(?:url|origin)\b|sender\s*\.\s*getURL\s*\(/.test(mainCode);
         checks.push({
           id: 19,
           name: "Validate IPC sender",

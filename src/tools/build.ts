@@ -183,15 +183,18 @@ const dataDir = app.getPath("userData"); // Writable
       // (`AppData\Local`, `Program Files`, NSIS-style `app-X.Y.Z`),
       // Squirrel-packaged Windows builds, and Linux installs (deb -> `/opt/`
       // or `/usr/lib/`, snap -> `/snap/`, AppImage -> `/tmp/.mount_*/`).
-      // Squirrel is matched only in path-like / log-prefix context:
-      // `Squirrel.exe`, `\Squirrel.`, `/squirrel/`, `Squirrel.Windows`, and
-      // start-of-string `Squirrel:` (the runtime's own log prefix). The
-      // boundary `(?:[\\/]|^)` excludes substring matches inside identifiers
-      // like `squirrel-helpers` (a real npm package). Still AND'd with the
-      // file-not-found family below, so the blast radius was small even
-      // before this tighter form.
+      // Squirrel is matched only in path-like or log-prefix context. Two
+      // alternatives:
+      //   `[\\/]Squirrel[.:\\/-]` -- requires an actual path separator before
+      //   `Squirrel` (so `\Squirrel.exe`, `/squirrel/`, `\Squirrel-Update`
+      //   match, but `squirrel-helpers` -- a real npm package name -- doesn't,
+      //   even if it appears at the start of a line).
+      //   `^Squirrel:` -- start-of-string log prefix the Squirrel.Windows
+      //   runtime emits (e.g. `Squirrel: starting up`).
+      // Still AND'd with the file-not-found family below, so the blast
+      // radius was small even before this tighter form.
       const looksLikePackagingIssue =
-        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents|\\AppData\\Local\\|[\\/]Program Files[\\/]|[\\/]app-\d+\.\d+\.\d+[\\/]|(?:[\\/]|^)Squirrel[.:\\/-]|[\\/]opt[\\/][^\\/]+[\\/]|[\\/]usr[\\/]lib[\\/][^\\/]+[\\/]|[\\/]snap[\\/]|[\\/]\.mount_[^\\/]+[\\/]|AppImage/i.test(
+        /app\.asar|resourcesPath|extraResources|extraFiles|app\.asar\.unpacked|\.app\/Contents|\\AppData\\Local\\|[\\/]Program Files[\\/]|[\\/]app-\d+\.\d+\.\d+[\\/]|[\\/]Squirrel[.:\\/-]|^Squirrel:|[\\/]opt[\\/][^\\/]+[\\/]|[\\/]usr[\\/]lib[\\/][^\\/]+[\\/]|[\\/]snap[\\/]|[\\/]\.mount_[^\\/]+[\\/]|AppImage/im.test(
           output,
         );
       if (

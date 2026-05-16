@@ -22,6 +22,16 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const require = createRequire(import.meta.url);
 const { version: localVersion } = require("../package.json");
 const VERSION = process.env.SMOKE_VERSION ?? localVersion;
+
+// Validate before we hand `VERSION` to a shell. Without this guard, a value
+// like `1.0.0; rm -rf ~` interpolated into the `npm install ${PKG}` argv
+// below would actually execute the rm half. The check accepts the npm-version
+// character set (digits, letters, dots, dashes, underscores, plus) and
+// rejects anything else -- spaces, quotes, shell metacharacters, newlines.
+if (!/^[\w.+-]+$/.test(VERSION)) {
+  console.error(`Invalid SMOKE_VERSION: ${JSON.stringify(VERSION)} -- must match /^[\\w.+-]+$/`);
+  process.exit(2);
+}
 const PKG = `@yawlabs/electron-mcp@${VERSION}`;
 
 console.log(`smoking ${PKG}...`);
@@ -45,11 +55,9 @@ if (!installDir) {
   // resolution the way a real consumer would. Spawn synchronously --
   // the smoke is short, no parallelism to gain.
   //
-  // PKG is built from a version string captured at script start (env or
-  // package.json), not from arbitrary stdin -- and the shell quoting of
-  // a `@scope/pkg@x.y.z` token is unambiguous -- so `shell: true` here
-  // is safe and resolves the npm.cmd / npm distinction on Windows
-  // without us hand-coding the extension.
+  // `shell: true` resolves `npm` -> `npm.cmd` on Windows without our having
+  // to hand-code the extension. Safe here ONLY because PKG was built from
+  // a regex-validated VERSION above; do NOT relax that check.
   execFileSync("npm", ["install", PKG, "--silent", "--no-audit", "--no-fund"], {
     cwd: installDir,
     stdio: "inherit",

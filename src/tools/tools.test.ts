@@ -345,6 +345,24 @@ describe("electron_generate_window_manager", () => {
       `all-modal config must not emit a parent lookup; got:\n${result}`,
     );
   });
+
+  it("rejects window ids that could break or inject into generated code", () => {
+    // Regression: window.id is interpolated unescaped into generated source
+    // (configs object key, parent lookup, loadCases). An id containing a
+    // quote, backslash, or newline could break the output or smuggle code.
+    // The schema now constrains ids to a safe identifier shape.
+    const schema = schemaOf("electron_generate_window_manager");
+    const bad = ['a"; evil(); //', "main'", "a\\b", "a\nb", "with space", "1starts-with-digit", "-leading-dash"];
+    for (const id of bad) {
+      const parsed = schema.safeParse({ windows: [{ id, title: "X" }] });
+      assert.strictEqual(parsed.success, false, `schema should reject id ${JSON.stringify(id)}`);
+    }
+    // Sanity: common shapes still accepted.
+    for (const id of ["main", "settings", "about", "dialog-a", "_internal", "Window2"]) {
+      const parsed = schema.safeParse({ windows: [{ id, title: "X" }] });
+      assert.strictEqual(parsed.success, true, `schema should accept id ${JSON.stringify(id)}`);
+    }
+  });
 });
 
 describe("electron_explain_process_model", () => {
@@ -511,6 +529,20 @@ describe("electron_audit_security", () => {
       mainCode: `ipcMain.handle("x", (event) => { const url = event.sender.getURL(); if (!url.startsWith("file://")) throw 0; });`,
     });
     assert.strictEqual(statusOf(result, 19), "PASS", `sender.getURL reference should PASS #19, got:\n${result}`);
+  });
+
+  it("does NOT pass #19 on accidental matches like senderFrame.urlPath", async () => {
+    // Regression: the regex `senderFrame\.(url|origin)` without a `\b`
+    // word boundary would PASS on a property named urlPath / urlProperty
+    // / originX. Word boundary now anchors the property name.
+    const result = await tool({
+      mainCode: `ipcMain.handle("x", (event) => { return event.senderFrame.urlPath; });`,
+    });
+    assert.strictEqual(
+      statusOf(result, 19),
+      "WARN",
+      `senderFrame.urlPath is not a validation read; #19 should WARN, got:\n${result}`,
+    );
   });
 
   it("recognizes CSP set via session.webRequest.onHeadersReceived in main code", async () => {
@@ -770,6 +802,21 @@ describe("electron_diagnose_build_error", () => {
     assert.ok(
       !result.includes("Missing file or module in packaged app"),
       `bare 'squirrel' mention without a path context must not trigger the packaging classifier; got:\n${result}`,
+    );
+  });
+
+  it("does NOT classify a MODULE_NOT_FOUND for 'squirrel-helpers' at start-of-line as packaging", async () => {
+    // Regression: a prior tightening used `(?:[\\/]|^)Squirrel[.:\\/-]` which
+    // still matched ^squirrel-helpers (the ^ boundary + the `-` suffix).
+    // The boundary now requires an actual path separator; the start-of-line
+    // path is reserved for the runtime log prefix `^Squirrel:`.
+    const result = await tool({
+      errorOutput: "squirrel-helpers: missing dependency\nMODULE_NOT_FOUND",
+      buildTool: "electron-builder",
+    });
+    assert.ok(
+      !result.includes("Missing file or module in packaged app"),
+      `start-of-line 'squirrel-helpers' must not trigger the packaging classifier; got:\n${result}`,
     );
   });
 
