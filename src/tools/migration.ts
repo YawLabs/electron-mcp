@@ -6,14 +6,9 @@ const breakingChanges: Record<number, Array<{ change: string; migration: string;
   28: [
     {
       change:
-        "BrowserWindow.setTrafficLightPosition() / getTrafficLightPosition() renamed to setWindowButtonPosition() / getWindowButtonPosition()",
+        "BrowserWindow.setTrafficLightPosition() / getTrafficLightPosition() removed (replaced by setWindowButtonPosition() / getWindowButtonPosition())",
       migration:
-        "Rename method calls from setTrafficLightPosition/getTrafficLightPosition to setWindowButtonPosition/getWindowButtonPosition.",
-      severity: "LOW",
-    },
-    {
-      change: "WebContentsView replaces BrowserView",
-      migration: "Migrate from BrowserView to WebContentsView. WebContentsView uses a more flexible layout system.",
+        "Rename method calls from setTrafficLightPosition/getTrafficLightPosition to setWindowButtonPosition/getWindowButtonPosition. The new API accepts `null` to reset to the default position.",
       severity: "MEDIUM",
     },
   ],
@@ -104,11 +99,6 @@ const breakingChanges: Record<number, Array<{ change: string; migration: string;
       migration: "Minimum macOS version is now 12.0 (Monterey). Update build targets and documentation.",
       severity: "MEDIUM",
     },
-    {
-      change: "Clipboard access deprecated from renderer process",
-      migration: "Move clipboard operations to the main process and expose them via IPC through the preload bridge.",
-      severity: "MEDIUM",
-    },
   ],
   39: [
     {
@@ -120,9 +110,9 @@ const breakingChanges: Record<number, Array<{ change: string; migration: string;
   ],
   40: [
     {
-      change: "Renderer-process clipboard access fully removed",
+      change: "Renderer-process clipboard access deprecated (will be removed in a future version)",
       migration:
-        "All clipboard operations must go through the main process via IPC. Create preload bridge methods for clipboard read/write.",
+        "Move clipboard operations to the main process and expose them via IPC through the preload bridge. Continued use in the renderer emits deprecation warnings and may break in a future major.",
       severity: "MEDIUM",
     },
   ],
@@ -164,8 +154,7 @@ const deprecatedApis: Array<{ api: string; deprecated: number; removed?: number;
   { api: "session.loadExtension()", deprecated: 36, removed: 37, replacement: "session.extensions.loadExtension()" },
   {
     api: "clipboard (renderer process)",
-    deprecated: 38,
-    removed: 40,
+    deprecated: 40,
     replacement: "IPC bridge to main process clipboard",
   },
   { api: "@electron/remote", deprecated: 14, replacement: "Explicit IPC via ipcMain.handle() + ipcRenderer.invoke()" },
@@ -328,7 +317,10 @@ export const migrationTools = [
       for (const { pattern, api } of patterns) {
         if (pattern.test(code)) {
           const entry = deprecatedApis.find((d) => d.api === api);
-          if (entry) {
+          // Only report APIs that are deprecated as of the caller's version.
+          // A v28 user using session.loadExtension() (deprecated v36) is on
+          // a supported API and should not be flagged.
+          if (entry && entry.deprecated <= ver) {
             found.push(entry);
           }
         }

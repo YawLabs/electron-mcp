@@ -355,14 +355,17 @@ export const securityTools = [
       }
 
       // 19. IPC sender validation
+      // Look for actual origin reads (senderFrame.url/origin or sender.getURL()),
+      // not just any mention of `event.sender` -- the latter matches
+      // `event.sender.send(...)` which is the OPPOSITE of validation.
       if (mainCode && /ipcMain\.(handle|on)\s*\(/.test(mainCode)) {
-        const hasGuard = /senderFrame|sender\.url|event\.sender/.test(mainCode);
+        const hasGuard = /senderFrame\s*\.\s*(?:url|origin)|sender\s*\.\s*getURL\s*\(/.test(mainCode);
         checks.push({
           id: 19,
           name: "Validate IPC sender",
           status: hasGuard ? "PASS" : "WARN",
           detail: hasGuard
-            ? "IPC handlers reference event.sender / senderFrame -- ensure security-sensitive handlers verify the origin."
+            ? "IPC handlers read event.senderFrame.url / .origin (or sender.getURL()) -- ensure security-sensitive handlers actually compare it against an allowlist, not just read it."
             : "No IPC sender validation detected. Any frame (including injected web content in a webview) can invoke ipcMain handlers; check event.senderFrame.url in security-sensitive ones.",
         });
       }
@@ -851,8 +854,19 @@ app.whenReady().then(() => {
         }
       }
 
+      // For preload code, this lint checks only one pattern (full-module
+      // exposure via contextBridge). The richer preload checks --
+      // raw ipcRenderer exposure, missing sender validation, listener leaks,
+      // direct window.* assignment -- live in `electron_audit_ipc_security`.
+      // Surface that pointer in every preload report so a CLEAN here is not
+      // mistaken for a comprehensive bill of health.
+      const preloadFooter =
+        fileType === "preload"
+          ? "\n\n---\n\n**Preload coverage note:** this lint only checks for full-module exposure via `contextBridge`. For comprehensive preload analysis (raw `ipcRenderer` exposure, missing sender validation, listener leaks, direct `window.*` assignment), run `electron_audit_ipc_security` with the same preload code."
+          : "";
+
       if (findings.length === 0) {
-        return `# Security Lint: CLEAN\n\nNo security issues detected in ${fileType} process code.\n\nNote: This is a static pattern analysis. It cannot detect all security issues -- always review the full application context and follow Electron's security checklist.`;
+        return `# Security Lint: CLEAN\n\nNo security issues detected in ${fileType} process code.\n\nNote: This is a static pattern analysis. It cannot detect all security issues -- always review the full application context and follow Electron's security checklist.${preloadFooter}`;
       }
 
       const sorted = findings.sort((a, b) => {
@@ -867,7 +881,7 @@ app.whenReady().then(() => {
         report += `## ${i + 1}. [${f.severity}] ${f.pattern}\n\n${f.detail}\n\n### Fix\n\n${f.fix}\n\n`;
       }
 
-      return report;
+      return report + preloadFooter;
     },
   },
 ] as const;

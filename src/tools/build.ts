@@ -105,11 +105,7 @@ export const buildTools = [
             problem: "Native module build tool missing",
             cause:
               "Native Node.js modules require compilation tools: Python 3, and a C++ compiler (Visual Studio Build Tools on Windows, Xcode on macOS, gcc on Linux).",
-            fix: `1. Windows: Install Visual Studio Build Tools:
-   \`\`\`bash
-   npm install --global windows-build-tools
-   # or install "Desktop development with C++" workload in Visual Studio
-   \`\`\`
+            fix: `1. Windows: Install Visual Studio Build Tools and select the "Desktop development with C++" workload: https://visualstudio.microsoft.com/downloads/ (the old \`windows-build-tools\` npm package is deprecated and no longer maintained).
 2. macOS: \`xcode-select --install\`
 3. Linux: \`sudo apt install build-essential python3\`
 4. Then rebuild: \`npx @electron/rebuild\``,

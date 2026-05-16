@@ -248,6 +248,19 @@ describe("electron_audit_ipc_security", () => {
       `template literal with interpolation must be flagged; got:\n${result}`,
     );
   });
+
+  it("flags missing sender validation only when no origin read is present", async () => {
+    // Regression: the old guard matched any mention of `event.sender`,
+    // including `event.sender.send(...)` which is the OPPOSITE of
+    // validation. event.sender.send must still be flagged as missing.
+    const result = await tool({
+      mainCode: `ipcMain.on("x", (event, msg) => { event.sender.send("reply", msg); });`,
+    });
+    assert.ok(
+      result.includes("IPC handlers without sender validation"),
+      `event.sender.send is not validation; must still flag missing sender check; got:\n${result}`,
+    );
+  });
 });
 
 describe("electron_generate_window_manager", () => {
@@ -442,6 +455,26 @@ describe("electron_audit_security", () => {
       mainCode: `ipcMain.handle("x", (event) => { const u = new URL(event.senderFrame.url); });`,
     });
     assert.strictEqual(statusOf(result, 19), "PASS", `senderFrame reference should PASS #19, got:\n${result}`);
+  });
+
+  it("does NOT pass #19 when code merely calls event.sender.send (the opposite of validation)", async () => {
+    // Regression: the old regex matched any mention of `event.sender`,
+    // including `event.sender.send(...)` which is a SEND, not a validation.
+    const result = await tool({
+      mainCode: `ipcMain.on("x", (event, msg) => { event.sender.send("reply", msg); });`,
+    });
+    assert.strictEqual(
+      statusOf(result, 19),
+      "WARN",
+      `event.sender.send is not validation; #19 should WARN, got:\n${result}`,
+    );
+  });
+
+  it("passes #19 when code uses sender.getURL() for origin check", async () => {
+    const result = await tool({
+      mainCode: `ipcMain.handle("x", (event) => { const url = event.sender.getURL(); if (!url.startsWith("file://")) throw 0; });`,
+    });
+    assert.strictEqual(statusOf(result, 19), "PASS", `sender.getURL reference should PASS #19, got:\n${result}`);
   });
 
   it("recognizes CSP set via session.webRequest.onHeadersReceived in main code", async () => {
@@ -645,6 +678,44 @@ describe("electron_lint_security", () => {
     const elapsed = Date.now() - start;
     assert.ok(elapsed < 1000, `scan took ${elapsed}ms on ~500KB of benign input`);
     assert.ok(typeof result === "string" && result.length > 0);
+  });
+
+  it("points users at electron_audit_ipc_security when linting preload code (CLEAN path)", async () => {
+    // Regression: lint_security with fileType=preload only checks one
+    // pattern. A CLEAN here is not a comprehensive preload bill of health;
+    // the report must steer users to the richer audit tool.
+    const result = await tool({
+      code: "const safe = 1;",
+      fileType: "preload",
+    });
+    assert.ok(result.includes("CLEAN"));
+    assert.ok(
+      result.includes("electron_audit_ipc_security"),
+      `preload CLEAN report must reference electron_audit_ipc_security; got:\n${result}`,
+    );
+  });
+
+  it("points users at electron_audit_ipc_security when linting preload code (findings path)", async () => {
+    const result = await tool({
+      code: `contextBridge.exposeInMainWorld('electron', require('electron'));`,
+      fileType: "preload",
+    });
+    assert.ok(result.includes("CRITICAL"));
+    assert.ok(
+      result.includes("electron_audit_ipc_security"),
+      `preload findings report must also reference electron_audit_ipc_security; got:\n${result}`,
+    );
+  });
+
+  it("does NOT add the preload footer to main / renderer reports", async () => {
+    const result = await tool({
+      code: "function safe() {}",
+      fileType: "main",
+    });
+    assert.ok(
+      !result.includes("electron_audit_ipc_security"),
+      `non-preload reports should not reference the IPC audit tool; got:\n${result}`,
+    );
   });
 });
 
@@ -952,6 +1023,28 @@ describe("electron_check_deprecated_apis", () => {
     });
     assert.ok(result.includes("CLEAN"));
   });
+
+  it("does NOT flag APIs that are still supported on the caller's electronVersion", async () => {
+    // Regression: previously, every matching pattern was reported regardless
+    // of `electronVersion`. session.loadExtension was deprecated in v36, so
+    // a v28 user is on the supported API and should not be flagged.
+    const result = await tool({
+      code: `session.loadExtension('/path/to/extension');`,
+      electronVersion: 28,
+    });
+    assert.ok(
+      result.includes("CLEAN"),
+      `session.loadExtension on v28 (deprecated v36) must not be flagged; got:\n${result}`,
+    );
+  });
+
+  it("DOES flag APIs that are deprecated on the caller's electronVersion", async () => {
+    const result = await tool({
+      code: `session.loadExtension('/path/to/extension');`,
+      electronVersion: 36,
+    });
+    assert.ok(result.includes("session.loadExtension"));
+  });
 });
 
 describe("electron_audit_performance", () => {
@@ -985,6 +1078,23 @@ describe("electron_audit_performance", () => {
       mainCode: "app.whenReady().then(() => { createWindow(); });",
     });
     assert.ok(result.includes("CLEAN"));
+  });
+
+  it("does NOT false-positive 'no bundler' when Electron Forge's Vite plugin is present", async () => {
+    // Regression: the unbundled-deps check only recognized electron-vite /
+    // vite / esbuild / webpack as bundler signals, missing the Forge plugin
+    // setup that bundles main + preload via Vite or webpack under the hood.
+    const deps = Array.from({ length: 25 }, (_, i) => `"pkg-${i}": "1.0.0"`).join(",");
+    const result = await tool({
+      packageJson: `{
+        "dependencies": { ${deps} },
+        "devDependencies": { "@electron-forge/plugin-vite": "^7.0.0" }
+      }`,
+    });
+    assert.ok(
+      !result.includes("without apparent bundler"),
+      `Forge + Vite plugin must be recognized as a bundler; got:\n${result}`,
+    );
   });
 
   it("prompts for input when nothing is provided", async () => {

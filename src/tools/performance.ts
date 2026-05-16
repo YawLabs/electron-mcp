@@ -193,7 +193,11 @@ export const performanceTools = [
             !pkg.devDependencies?.["electron-vite"] &&
             !pkg.devDependencies?.esbuild &&
             !pkg.devDependencies?.webpack &&
-            !pkg.devDependencies?.vite
+            !pkg.devDependencies?.vite &&
+            !pkg.devDependencies?.["@electron-forge/plugin-vite"] &&
+            !pkg.devDependencies?.["@electron-forge/plugin-webpack"] &&
+            !pkg.devDependencies?.rollup &&
+            !pkg.devDependencies?.parcel
           ) {
             findings.push({
               pattern: `${depCount} runtime dependencies without apparent bundler`,

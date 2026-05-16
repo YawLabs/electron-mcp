@@ -453,8 +453,14 @@ declare global {
         // mention these patterns don't trigger findings.
         const code = stripComments(input.mainCode);
 
-        // Check for missing sender validation
-        if (/ipcMain\.(handle|on)\s*\(/.test(code) && !/senderFrame|sender\.url|event\.sender/.test(code)) {
+        // Check for missing sender validation. Require an actual origin read
+        // (senderFrame.url/origin or sender.getURL()) rather than any mention
+        // of `event.sender` -- the latter matches `event.sender.send(...)`,
+        // which is the opposite of validation.
+        if (
+          /ipcMain\.(handle|on)\s*\(/.test(code) &&
+          !/senderFrame\s*\.\s*(?:url|origin)|sender\s*\.\s*getURL\s*\(/.test(code)
+        ) {
           findings.push({
             severity: "MEDIUM",
             issue: "IPC handlers without sender validation",
