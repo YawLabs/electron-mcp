@@ -6,6 +6,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.10] - 2026-05-19
+
+### Infrastructure
+
+- `release.sh` adds an `npm whoami` pre-flight check before any mutating step (skipped when `CI=true`, which authenticates via `NODE_AUTH_TOKEN`). Without it, a local run with a stale npm session would lint, build, test, bump, commit, tag, and push -- then error at step 5 with an `E404` from the registry, leaving the tag on origin and a half-shipped state. The check fails fast with an actionable message naming both fix paths (`npm login --auth-type=web` locally, or push the tag and let `release.yml` publish). Observed on the 1.2.9 release.
+- `release.yml` wraps `mcp-publisher login github-oidc` in a 3-attempt retry with linear backoff (10s, 20s). The OIDC token endpoint is GitHub's own service and occasionally returns 504 -- one such timeout failed the 1.2.9 release even though the publish step, smoke test, and `mcp-publisher` install all succeeded. A bounded retry absorbs that transient class.
+
+## [1.2.9] - 2026-05-19
+
+### Fixed
+
+- `electron_lint_security` will-navigate / setWindowOpenHandler findings no longer fire on type-only references to `BrowserWindow`. The gate previously substring-matched `BrowserWindow|new BaseWindow`, so an `import type { BrowserWindow } from "electron"` or a typedef parameter triggered MEDIUM findings even when the file constructed no windows. Now requires `new BrowserWindow(...)` or `new BaseWindow(...)`, matching the gate `electron_audit_security` uses for checks #17/#18.
+- `electron_audit_security` check #1 (HTTPS) excludes IPv6 loopback (`[::1]`) and the IPv4 wildcard-bind (`0.0.0.0`) in addition to `localhost` and `127.0.0.1`. electron-vite's `--host` default binds `0.0.0.0` and IPv6 dev setups emit URLs like `http://[::1]:5173` -- both are dev addresses, not security failures. A complementary regression test confirms the exclusion is not so greedy that `http://example.com` PASSes when `localhost` also appears in the file.
+
+### Changed
+
+- `electron_configure_csp` dropped its `framework` input. The parameter was declared in the schema (`react | vue | svelte | vanilla`) but the handler never referenced it; framework-specific CSP needs (Vue template compiler requiring `'unsafe-eval'`) are already expressible through `needsEval`. zod strips unknown keys silently, so callers still passing `framework` see no behavior change.
+
+### Infrastructure
+
+- `package.json` `test` and `prepublishOnly` switched to `cd dist && node --test` for test discovery. New `*.test.ts` files in `src/` are picked up automatically; previously a hardcoded four-file list silently missed any new test file. The `cd dist` CWD-walk form sidesteps the `node --test dist/` issue documented in the 1.2.3 entry (Node 22 treating `dist/index.js` as a test entry) -- auto-discovery from the CWD does not include `index.js` because it does not match the `*.test.*` / `*.spec.*` naming convention.
+- `build.mjs` dropped the redundant `external: ["node:*"]`. `platform: "node"` already externalizes both bare and `node:`-prefixed built-ins, so the explicit list was a no-op.
+- 35 new regression and coverage tests across previously untested branches:
+  - `electron_audit_security`: IPv6 / `0.0.0.0` / `localhost` HTTPS exclusions (positive + negative), checks #5/#7/#8/#9 (webSecurity, allowRunningInsecureContent, experimentalFeatures, enableBlinkFeatures), #11/#12 (preload direct `window.*` assignment, `@electron/remote`), CSP `'unsafe-eval'`-only WARN.
+  - `electron_audit_ipc_security`: "no inputs" contract message, listener-without-cleanup LOW.
+  - `electron_lint_security`: type-only `BrowserWindow` does not fire; construction-with-no-guard still does.
+  - `electron_diagnose_build_error`: node-gyp/MSBuild, NODE_MODULE_VERSION mismatch, EPERM, icon-format diagnoses.
+  - `electron_configure_auto_update`: generic provider.
+  - `electron_configure_csp`: webpack dev `'unsafe-eval'` on script-src.
+  - `electron_audit_performance`: BrowserWindow count > 2, heavy preload (>10 imports), CDN-loaded resources.
+  - `electron_scaffold_ipc_channel`: bidirectional code path emits both invoke/handle and on* listener.
+  - `electron_generate_preload_bridge`: send-type method emits `ipcRenderer.send` with void return.
+  - `electron_configure_fuses`: strict-level title labeling and value-parity with recommended (today they emit identical fuse values; the test surfaces divergence if it ever becomes intentional).
+  - `electron_scaffold_project`: vue / svelte / vanilla framework branches, auto-update feature wires `electron-updater`.
+  - `electron_check_deprecated_apis`: `@electron/remote` require, `runningUnderARM64Translation`.
+  - `static-analysis.ts`: unterminated-string-literal handling for both `stripComments` and `stripCommentsAndStrings`.
+- Full suite: 181/181.
+
 ## [1.2.8] - 2026-05-16
 
 ### Fixed
