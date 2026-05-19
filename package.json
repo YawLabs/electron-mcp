@@ -36,12 +36,12 @@
     "build": "tsc && node build.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test dist/static-analysis.test.js dist/integration.test.js dist/version.test.js dist/tools/tools.test.js",
+    "test": "npm run build && cd dist && node --test",
     "test:ci": "npm run test",
     "smoke:published": "node scripts/smoke-published.mjs",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
-    "prepublishOnly": "npm run build && node --test dist/static-analysis.test.js dist/integration.test.js dist/version.test.js dist/tools/tools.test.js"
+    "prepublishOnly": "npm run build && cd dist && node --test"
   },
   "dependencies": {},
   "overrides": {

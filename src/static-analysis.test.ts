@@ -50,6 +50,14 @@ describe("stripComments", () => {
     assert.strictEqual(typeof out, "string");
     assert.ok(out.startsWith("before"));
   });
+
+  it("handles unterminated string literals without infinite-looping", () => {
+    // Symmetric to the unterminated-block-comment guard above: the string-scan
+    // inner loop must terminate at EOF when a quote never closes.
+    const out = stripComments(`const x = "never closes`);
+    assert.strictEqual(typeof out, "string");
+    assert.ok(out.startsWith("const x ="));
+  });
 });
 
 describe("stripCommentsAndStrings", () => {
@@ -88,6 +96,16 @@ describe("stripCommentsAndStrings", () => {
     const out = stripCommentsAndStrings("const x = `hello world`;");
     assert.ok(out.includes("``"));
     assert.ok(!out.includes("hello world"));
+  });
+
+  it("handles unterminated string literals without infinite-looping", () => {
+    // Regression guard: the inner string-scan loop could spin if a quote
+    // never closes. Consume to EOF and return -- no specific output shape
+    // asserted beyond "returned a string starting with the code before the
+    // unterminated quote".
+    const out = stripCommentsAndStrings(`const x = "never closes`);
+    assert.strictEqual(typeof out, "string");
+    assert.ok(out.startsWith("const x ="));
   });
 });
 

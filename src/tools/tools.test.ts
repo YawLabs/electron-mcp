@@ -134,6 +134,24 @@ describe("electron_scaffold_ipc_channel", () => {
       "on* method must follow the description comment directly",
     );
   });
+
+  it("bidirectional emits both the invoke/handle pair AND the on* listener", async () => {
+    // Distinct code path from renderer-to-main / main-to-renderer: bidirectional
+    // emits both halves in main, preload, types, and renderer-usage sections.
+    const result = await tool({
+      channelName: "stream-data",
+      direction: "bidirectional",
+      description: "Streams data bidirectionally",
+      args: "{ chunk: string }",
+      returnType: "{ ack: boolean }",
+    });
+    assert.ok(result.includes("ipcMain.handle"), "bidirectional must emit ipcMain.handle");
+    assert.ok(/streamData:\s*\(/.test(result), "preload must expose streamData(...) method");
+    assert.ok(/onStreamData:\s*\(callback/.test(result), "preload must expose onStreamData listener");
+    assert.ok(result.includes("ipcRenderer.invoke"), "bidirectional must wire invoke in preload");
+    assert.ok(result.includes("ipcRenderer.on"), "bidirectional must wire .on for the listener half");
+    assert.ok(result.includes("removeListener"), "bidirectional must emit listener cleanup");
+  });
 });
 
 describe("electron_generate_preload_bridge", () => {
@@ -154,6 +172,22 @@ describe("electron_generate_preload_bridge", () => {
     assert.ok(result.includes("onProgress"));
     assert.ok(result.includes("removeListener"), "on-type methods must emit cleanup");
     assert.ok(result.includes("interface MyAPI"), "must emit the typed namespace interface");
+  });
+
+  it("send-type methods emit ipcRenderer.send with void return", async () => {
+    // 'send' is a third code path alongside invoke / on -- distinct line shape
+    // (no Promise, no callback). With only a send method, no invoke wiring
+    // should be present in the emitted preload.
+    const result = await tool({
+      methods: [{ name: "logEvent", channel: "log-event", type: "send", args: "{ action: string }" }],
+    });
+    assert.ok(/ipcRenderer\.send\(/.test(result), `send-type method must call ipcRenderer.send; got:\n${result}`);
+    assert.ok(!/ipcRenderer\.invoke/.test(result), `send-only list must not emit invoke wiring; got:\n${result}`);
+    assert.ok(result.includes("logEvent"));
+    assert.ok(
+      /logEvent\(args:\s*\{\s*action:\s*string\s*\}\):\s*void/.test(result),
+      `type decl must show void return; got:\n${result}`,
+    );
   });
 });
 
@@ -260,6 +294,22 @@ describe("electron_audit_ipc_security", () => {
       result.includes("IPC handlers without sender validation"),
       `event.sender.send is not validation; must still flag missing sender check; got:\n${result}`,
     );
+  });
+
+  it("returns the 'please provide' message when called with no inputs", async () => {
+    const result = await tool({});
+    assert.ok(
+      result.includes("Please provide at least one"),
+      `empty-input contract message must surface; got:\n${result}`,
+    );
+  });
+
+  it("flags ipcRenderer.on without removeListener as LOW (memory leak)", async () => {
+    const result = await tool({
+      preloadCode: `ipcRenderer.on('update', (e, data) => { console.log(data); });`,
+    });
+    assert.ok(/without cleanup|memory leak/i.test(result), `listener-without-cleanup must surface; got:\n${result}`);
+    assert.ok(result.includes("LOW"), `expected LOW severity for listener leak; got:\n${result}`);
   });
 });
 
@@ -658,6 +708,84 @@ describe("electron_audit_security", () => {
       `report should call out static-analysis blind spots; got:\n${result}`,
     );
   });
+
+  it("#1 does not flag http://localhost as insecure (dev-loopback exclusion)", async () => {
+    const result = await tool({ mainCode: `win.loadURL("http://localhost:5173");` });
+    assert.strictEqual(
+      statusOf(result, 1),
+      "PASS",
+      `http://localhost is dev-loopback and must not FAIL #1; got:\n${result}`,
+    );
+  });
+
+  it("#1 does not flag http://[::1] as insecure (IPv6 loopback exclusion)", async () => {
+    // Regression guard for the IPv6-loopback carve-out. electron-vite with --host
+    // can bind ::1 and emit URLs like http://[::1]:5173.
+    const result = await tool({ mainCode: `win.loadURL("http://[::1]:5173");` });
+    assert.strictEqual(statusOf(result, 1), "PASS", `http://[::1] must not FAIL #1; got:\n${result}`);
+  });
+
+  it("#1 does not flag http://0.0.0.0 as insecure (wildcard-bind exclusion)", async () => {
+    // Regression guard: electron-vite's default --host binds 0.0.0.0; a generated
+    // URL with that host is a dev address, not a security failure.
+    const result = await tool({ mainCode: `win.loadURL("http://0.0.0.0:5173");` });
+    assert.strictEqual(statusOf(result, 1), "PASS", `http://0.0.0.0 must not FAIL #1; got:\n${result}`);
+  });
+
+  it("#1 still FAILs on http://example.com even when localhost is also referenced", async () => {
+    // Negative: the loopback exclusion must not silently absolve a file that
+    // also contains an unrelated non-loopback URL.
+    const result = await tool({
+      mainCode: `win.loadURL("http://example.com");\nconst dev = "http://localhost:5173";`,
+    });
+    assert.strictEqual(
+      statusOf(result, 1),
+      "FAIL",
+      `non-loopback http should still FAIL #1 even with localhost present; got:\n${result}`,
+    );
+  });
+
+  it("#5 FAILs when webSecurity is explicitly disabled", async () => {
+    const result = await tool({ browserWindowConfig: "{ webPreferences: { webSecurity: false } }" });
+    assert.strictEqual(statusOf(result, 5), "FAIL", `webSecurity:false should FAIL #5; got:\n${result}`);
+  });
+
+  it("#7 FAILs on allowRunningInsecureContent: true", async () => {
+    const result = await tool({
+      browserWindowConfig: "{ webPreferences: { allowRunningInsecureContent: true } }",
+    });
+    assert.strictEqual(statusOf(result, 7), "FAIL", `allowRunningInsecureContent should FAIL #7; got:\n${result}`);
+  });
+
+  it("#8 WARNs on experimentalFeatures: true", async () => {
+    const result = await tool({ browserWindowConfig: "{ webPreferences: { experimentalFeatures: true } }" });
+    assert.strictEqual(statusOf(result, 8), "WARN", `experimentalFeatures should WARN #8; got:\n${result}`);
+  });
+
+  it("#9 WARNs when enableBlinkFeatures is set", async () => {
+    const result = await tool({
+      browserWindowConfig: `{ webPreferences: { enableBlinkFeatures: "CSSContainerQueries" } }`,
+    });
+    assert.strictEqual(statusOf(result, 9), "WARN", `enableBlinkFeatures should WARN #9; got:\n${result}`);
+  });
+
+  it("#11 FAILs on direct window.* assignment in preload", async () => {
+    const result = await tool({ preloadCode: "window.api = { read: () => {} };" });
+    assert.strictEqual(statusOf(result, 11), "FAIL", `direct window assignment should FAIL #11; got:\n${result}`);
+  });
+
+  it("#12 WARNs when preload imports @electron/remote", async () => {
+    const result = await tool({ preloadCode: `const remote = require('@electron/remote');` });
+    assert.strictEqual(statusOf(result, 12), "WARN", `@electron/remote should WARN #12; got:\n${result}`);
+  });
+
+  it("#6 WARNs when CSP contains only 'unsafe-eval' (symmetric to the unsafe-inline case)", async () => {
+    const result = await tool({
+      htmlContent: `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'">`,
+    });
+    assert.strictEqual(statusOf(result, 6), "WARN", `unsafe-eval-only CSP should WARN #6; got:\n${result}`);
+    assert.ok(result.includes("unsafe-eval"));
+  });
 });
 
 describe("electron_configure_fuses", () => {
@@ -677,6 +805,21 @@ describe("electron_configure_fuses", () => {
     });
     assert.ok(result.includes("RunAsNode]: true"));
     assert.ok(result.includes("EnableCookieEncryption]: false"));
+  });
+
+  it("strict level labels the report and emits the same fuse values as recommended (today)", async () => {
+    // strict and recommended emit identical fuse values today; only the title
+    // differs. If a future change makes them diverge, this test surfaces it
+    // as an early signal to add a more specific assertion.
+    const recommended = await tool({ level: "recommended" });
+    const strict = await tool({ level: "strict" });
+    assert.ok(strict.includes("(strict)"), `strict report title must label level; got header:\n${strict.slice(0, 80)}`);
+    const fuseLines = (s: string) => (s.match(/FuseV1Options\.\w+\]:\s*\w+/g) || []).slice(0, 16).join("\n");
+    assert.strictEqual(
+      fuseLines(strict),
+      fuseLines(recommended),
+      "strict and recommended fuse values diverged -- update this test if intentional",
+    );
   });
 });
 
@@ -728,6 +871,20 @@ describe("electron_configure_csp", () => {
       /style-src[^;]*'unsafe-inline'/.test(devSection[1]),
       `vite dev CSP must keep unsafe-inline so HMR styling works; got:\n${devSection[1]}`,
     );
+  });
+
+  it("webpack dev CSP relaxes script-src with 'unsafe-eval' (not 'unsafe-inline')", async () => {
+    // Distinct from vite: webpack HMR uses eval for module replacement, so
+    // dev script-src needs 'unsafe-eval'. The branch is reachable only via
+    // bundler: 'webpack'.
+    const result = await tool({ bundler: "webpack" });
+    const devSection = result.match(/## Development CSP\n\n```\n([\s\S]*?)\n```/);
+    assert.ok(devSection, "dev CSP block must be present");
+    assert.ok(
+      /script-src[^;]*'unsafe-eval'/.test(devSection[1]),
+      `webpack dev CSP must include 'unsafe-eval' on script-src; got:\n${devSection[1]}`,
+    );
+    assert.ok(devSection[1].includes("ws://localhost"), "webpack dev CSP must allow ws://localhost");
   });
 });
 
@@ -858,6 +1015,35 @@ describe("electron_lint_security", () => {
       !result.includes("electron_audit_ipc_security"),
       `non-preload reports should not reference the IPC audit tool; got:\n${result}`,
     );
+  });
+
+  it("does NOT flag will-navigate / setWindowOpenHandler on a type-only BrowserWindow import", async () => {
+    // Regression: the gate previously substring-matched `BrowserWindow`, which
+    // fired on type-only imports and typedef references. The construction
+    // gate now requires `new BrowserWindow(...)` / `new BaseWindow(...)`.
+    const result = await tool({
+      code: `import type { BrowserWindow } from "electron";\nexport function f(_w: BrowserWindow) {}`,
+      fileType: "main",
+    });
+    assert.ok(
+      !result.includes("No will-navigate handler"),
+      `type-only BrowserWindow reference must not trigger will-navigate finding; got:\n${result}`,
+    );
+    assert.ok(
+      !result.includes("No setWindowOpenHandler"),
+      `type-only reference must not trigger setWindowOpenHandler finding; got:\n${result}`,
+    );
+  });
+
+  it("DOES flag will-navigate / setWindowOpenHandler when a window is actually constructed", async () => {
+    // Positive complement to the type-only-import test above: `new BrowserWindow(...)`
+    // without guards must still surface both findings.
+    const result = await tool({
+      code: `const win = new BrowserWindow({});\nwin.loadURL("https://example.com");`,
+      fileType: "main",
+    });
+    assert.ok(result.includes("No will-navigate handler"), "construction without guard must flag will-navigate");
+    assert.ok(result.includes("No setWindowOpenHandler"), "construction without guard must flag setWindowOpenHandler");
   });
 });
 
@@ -1025,6 +1211,48 @@ describe("electron_diagnose_build_error", () => {
     assert.ok(allResult.includes("macOS code signing identity"));
     assert.ok(allResult.includes("macOS notarization failed"));
   });
+
+  it("recognizes node-gyp / MSBuild errors as missing native build tools", async () => {
+    // Outer gate requires `node-gyp|rebuild|native.*module|...`. A bare `gyp ERR!`
+    // doesn't satisfy it; real Windows native-module errors include `node-gyp`
+    // in the stderr stream, which is what this test pins.
+    const result = await tool({
+      errorOutput: "node-gyp ERR! find Python\ngyp ERR! find VS\nMSBuild error: cannot find C++ compiler",
+      buildTool: "electron-builder",
+      platform: "win32",
+    });
+    assert.ok(
+      result.includes("Native module build tool missing") || result.includes("build tool"),
+      `gyp/MSBuild output should be diagnosed as missing build tools; got:\n${result}`,
+    );
+  });
+
+  it("recognizes NODE_MODULE_VERSION mismatch as a rebuild issue", async () => {
+    // Outer gate needs one of `node-gyp|rebuild|native.*module|...`. Including
+    // the typical "run electron-rebuild" hint mirrors real npm output shape.
+    const result = await tool({
+      errorOutput:
+        "Error: NODE_MODULE_VERSION mismatch -- module was compiled against a different Node.js version. Try electron-rebuild.",
+    });
+    assert.ok(
+      /version mismatch|@electron\/rebuild|electron-rebuild/i.test(result),
+      `NODE_MODULE_VERSION should be diagnosed as a rebuild issue; got:\n${result}`,
+    );
+  });
+
+  it("recognizes EPERM / EACCES as a permission issue", async () => {
+    const result = await tool({
+      errorOutput: "Error: EPERM: operation not permitted, open 'C:\\\\dist\\\\app.exe'",
+    });
+    assert.ok(result.includes("Permission denied"), `EPERM should surface as permission denied; got:\n${result}`);
+  });
+
+  it("recognizes icon-format errors", async () => {
+    const result = await tool({
+      errorOutput: "Error: icon not found at assets/icon.ico",
+    });
+    assert.ok(/App icon error|icon/i.test(result), `icon error should surface; got:\n${result}`);
+  });
 });
 
 describe("electron_configure_auto_update", () => {
@@ -1058,6 +1286,15 @@ describe("electron_configure_auto_update", () => {
     });
     assert.ok(result.includes("my-releases"));
     assert.ok(result.includes('"provider": "s3"'));
+  });
+
+  it("generic provider embeds the configured URL", async () => {
+    const result = await tool({
+      provider: "generic",
+      genericUrl: "https://updates.example.com",
+    });
+    assert.ok(result.includes('"provider": "generic"'));
+    assert.ok(result.includes("https://updates.example.com"));
   });
 });
 
@@ -1157,6 +1394,30 @@ describe("electron_scaffold_project", () => {
     });
     assert.ok(result.includes("electron-app"));
   });
+
+  it("vue framework references .vue source files", async () => {
+    const result = await tool({ name: "vue-app", framework: "vue" });
+    assert.ok(result.includes("vue-app"));
+    assert.ok(result.includes(".vue"), "vue framework must reference .vue source files");
+  });
+
+  it("svelte framework references .svelte source files", async () => {
+    const result = await tool({ name: "svelte-app", framework: "svelte" });
+    assert.ok(result.includes(".svelte"), "svelte framework must reference .svelte source files");
+  });
+
+  it("vanilla framework does not reference .vue or .svelte files", async () => {
+    const result = await tool({ name: "vanilla-app", framework: "vanilla" });
+    assert.ok(result.includes("vanilla-app"));
+    assert.ok(!result.includes(".vue"), "vanilla scaffold must not reference .vue files");
+    assert.ok(!result.includes(".svelte"), "vanilla scaffold must not reference .svelte files");
+  });
+
+  it("auto-update feature wires electron-updater into the main process", async () => {
+    const result = await tool({ name: "u-app", features: ["auto-update"] });
+    assert.ok(result.includes("electron-updater"), "auto-update feature must import electron-updater");
+    assert.ok(/autoUpdater\.checkForUpdatesAndNotify/.test(result), "must wire autoUpdater.checkForUpdatesAndNotify()");
+  });
 });
 
 describe("electron_migrate_version", () => {
@@ -1229,6 +1490,25 @@ describe("electron_check_deprecated_apis", () => {
       electronVersion: 36,
     });
     assert.ok(result.includes("session.loadExtension"));
+  });
+
+  it("detects @electron/remote require and points at explicit IPC", async () => {
+    const result = await tool({
+      code: `const remote = require('@electron/remote');`,
+      electronVersion: 41,
+    });
+    assert.ok(result.includes("@electron/remote"));
+    assert.ok(result.includes("Explicit IPC") || result.includes("ipcMain"));
+  });
+
+  it("detects runningUnderARM64Translation and reports the rename (removed in v32)", async () => {
+    const result = await tool({
+      code: "if (app.runningUnderARM64Translation) { /* ... */ }",
+      electronVersion: 41,
+    });
+    assert.ok(result.includes("runningUnderARM64Translation"));
+    assert.ok(result.includes("REMOVED"), `v41 caller should see REMOVED status; got:\n${result}`);
+    assert.ok(result.includes("runningUnderTranslation"));
   });
 });
 
@@ -1343,6 +1623,29 @@ describe("electron_audit_performance", () => {
     assert.ok(findings && findings.length === 1, `expected one consolidated sync finding; got: ${findings?.length}`);
     assert.ok(/fs \*Sync calls/.test(findings[0]), `finding should list fs *Sync; got: ${findings[0]}`);
     assert.ok(/child_process \*Sync/.test(findings[0]), `finding should list child_process *Sync; got: ${findings[0]}`);
+  });
+
+  it("flags more than 2 BrowserWindow constructions at startup", async () => {
+    const result = await tool({
+      mainCode: "new BrowserWindow({});\nnew BrowserWindow({});\nnew BrowserWindow({});",
+    });
+    assert.ok(
+      /3 BrowserWindow instances created/.test(result),
+      `>2 windows should surface as a memory-pressure finding; got:\n${result}`,
+    );
+  });
+
+  it("flags preload with more than 10 imports as heavy", async () => {
+    const imports = Array.from({ length: 11 }, (_, i) => `import m${i} from "m${i}";`).join("\n");
+    const result = await tool({ preloadCode: imports });
+    assert.ok(/Heavy preload script/.test(result), `11 imports should trigger heavy-preload finding; got:\n${result}`);
+  });
+
+  it("flags CDN-loaded resources in renderer code", async () => {
+    const result = await tool({
+      rendererCode: `const url = "https://cdn.jsdelivr.net/npm/some-pkg/dist.js";`,
+    });
+    assert.ok(result.includes("CDN-loaded"), `CDN URL in renderer should surface; got:\n${result}`);
   });
 });
 

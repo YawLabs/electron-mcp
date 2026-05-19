@@ -21,8 +21,8 @@ await build({
   define: {
     __VERSION__: JSON.stringify(pkg.version),
   },
-  // Node built-ins are provided by the runtime, not bundled
-  external: ["node:*"],
+  // `platform: "node"` already externalizes both bare and `node:`-prefixed
+  // built-ins, so no explicit `external` is needed.
   sourcemap: true,
   // Keep readable for debugging MCP issues
   minify: false,

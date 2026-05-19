@@ -80,7 +80,11 @@ export const securityTools = [
       // BrowserWindow constructor options. Scan whichever code inputs we have.
       const urlCarryingCode = [bwConfig, mainCode, preload, html].filter(Boolean).join("\n");
       if (urlCarryingCode) {
-        const hasHttp = /http:\/\/(?!localhost|127\.0\.0\.1)/.test(urlCarryingCode);
+        // Local-dev addresses excluded: `localhost`, IPv4 loopback `127.0.0.1`,
+        // IPv4 wildcard `0.0.0.0` (electron-vite's default `--host` bind),
+        // and IPv6 loopback `[::1]`. The bracketed-IPv6 form is what shows
+        // up in URLs (`http://[::1]:5173`); the escapes are for the regex.
+        const hasHttp = /http:\/\/(?!localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(urlCarryingCode);
         checks.push({
           id: 1,
           name: "Only load secure content (HTTPS)",
@@ -583,10 +587,6 @@ npm install --save-dev @electron/fuses
         .enum(["vite", "webpack", "none"])
         .optional()
         .describe("Bundler used (affects script-src for HMR in dev mode). Defaults to 'vite'."),
-      framework: z
-        .enum(["react", "vue", "svelte", "vanilla"])
-        .optional()
-        .describe("Frontend framework. Defaults to 'react'."),
       needsInlineStyles: z
         .boolean()
         .optional()
@@ -606,7 +606,6 @@ npm install --save-dev @electron/fuses
     }),
     handler: async (input: {
       bundler?: string;
-      framework?: string;
       needsInlineStyles?: boolean;
       needsEval?: boolean;
       externalConnections?: string[];
@@ -785,8 +784,13 @@ app.whenReady().then(() => {
           });
         }
 
-        // Missing will-navigate handler
-        if (/BrowserWindow|new\s+BaseWindow/.test(code) && !/will-navigate/.test(code)) {
+        // Missing will-navigate handler. Gate on actual construction
+        // (`new BrowserWindow(...)` / `new BaseWindow(...)`) rather than a
+        // bare substring -- a type-only import or a typedef reference is
+        // not a reason to flag missing navigation guards. Matches the gate
+        // electron_audit_security uses for checks #17/#18 so both tools
+        // agree on what counts as "this file creates a window".
+        if (/new\s+(?:BrowserWindow|BaseWindow)\s*\(/.test(code) && !/will-navigate/.test(code)) {
           findings.push({
             severity: "MEDIUM",
             pattern: "No will-navigate handler",
@@ -796,8 +800,8 @@ app.whenReady().then(() => {
           });
         }
 
-        // Missing setWindowOpenHandler
-        if (/BrowserWindow|new\s+BaseWindow/.test(code) && !/setWindowOpenHandler/.test(code)) {
+        // Missing setWindowOpenHandler -- same construction gate as above.
+        if (/new\s+(?:BrowserWindow|BaseWindow)\s*\(/.test(code) && !/setWindowOpenHandler/.test(code)) {
           findings.push({
             severity: "MEDIUM",
             pattern: "No setWindowOpenHandler",
