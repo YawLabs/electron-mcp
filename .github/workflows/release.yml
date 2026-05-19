@@ -102,7 +102,26 @@ jobs:
           mv server.tmp server.json
 
       - name: Authenticate to MCP Registry (GitHub OIDC)
-        run: ./mcp-publisher login github-oidc
+        # The OIDC token endpoint is GitHub's own service and is occasionally
+        # flaky -- a 504 on `mcp-publisher login github-oidc` failed the
+        # v1.2.9 release (2026-05-19) even though npm publish, smoke test,
+        # and mcp-publisher install all succeeded. Three attempts with
+        # linear backoff absorbs that class of transient. Typical case
+        # completes on attempt 1; 504s usually clear within a minute.
+        run: |
+          for i in 1 2 3; do
+            if ./mcp-publisher login github-oidc; then
+              echo "OIDC login succeeded on attempt $i"
+              break
+            fi
+            if [ "$i" = "3" ]; then
+              echo "OIDC login failed after 3 attempts" >&2
+              exit 1
+            fi
+            SLEEP=$((i * 10))
+            echo "OIDC login failed (attempt $i/3) -- retrying in ${SLEEP}s..." >&2
+            sleep $SLEEP
+          done
 
       - name: Publish to MCP Registry
         run: ./mcp-publisher publish

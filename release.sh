@@ -59,6 +59,19 @@ cd "$SCRIPT_DIR"
 command -v node >/dev/null || fail "node not installed"
 command -v npm >/dev/null  || fail "npm not installed"
 
+# Verify the npm session exists BEFORE any mutating step. Without this,
+# the script happily lints, builds, bumps, commits, tags, and pushes --
+# then errors at step 5 with E404 from the registry, leaving a tag on
+# origin and a half-shipped release. In CI we authenticate via
+# NODE_AUTH_TOKEN (set by the workflow), so the check only matters for
+# local runs. Observed on the v1.2.9 release (2026-05-19).
+if [ "$IS_CI" != "true" ]; then
+  if ! NPM_USER=$(npm whoami 2>/dev/null); then
+    fail "no npm session -- run 'npm login --auth-type=web' first, or push a tag and let CI publish via release.yml"
+  fi
+  info "npm session: ${NPM_USER}"
+fi
+
 CURRENT_VERSION=$(node -p "require('./package.json').version")
 RESUMING=false
 
