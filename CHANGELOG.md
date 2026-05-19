@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.11] - 2026-05-19
+
+### Documentation
+
+- Carries the CHANGELOG entries for 1.2.9 and 1.2.10, which were tagged and published without their release notes. The `dist/index.js` artifact is unchanged from 1.2.10; this release exists so the npm `latest` pointer and the MCP Registry's `isLatest` flag advance past the docs-update commit, and so the GitHub Release body picks up the CHANGELOG diff.
+
 ## [1.2.10] - 2026-05-19
 
 ### Infrastructure
