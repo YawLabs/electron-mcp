@@ -40,7 +40,7 @@ macOS / Linux / WSL:
   "mcpServers": {
     "electron": {
       "command": "npx",
-      "args": ["-y", "@yawlabs/electron-mcp"]
+      "args": ["-y", "@yawlabs/electron-mcp@latest"]
     }
   }
 }
@@ -53,7 +53,7 @@ Windows:
   "mcpServers": {
     "electron": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@yawlabs/electron-mcp"]
+      "args": ["/c", "npx", "-y", "@yawlabs/electron-mcp@latest"]
     }
   }
 }
