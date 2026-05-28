@@ -111,32 +111,17 @@ fi
 # =============================================================================
 step 1 "Lint"
 
-# In CI, ci.yml ran lint as a workflow_call gate before this job started, so
-# repeating it here just burns runner minutes. Local runs still lint -- it's
-# the only place a developer's pre-publish gate lives.
-if [ "$IS_CI" = "true" ]; then
-  info "CI mode -- lint already ran in ci.yml gate, skipping"
-else
-  npm run lint || fail "Lint failed"
-  info "Lint passed"
-fi
+npm run lint || fail "Lint failed"
+info "Lint passed"
 
 # =============================================================================
 # Step 2: Build & test
 # =============================================================================
 step 2 "Build & test"
 
-# Same logic as step 1: ci.yml's matrix already built and tested on every
-# supported Node version. npm publish below also triggers prepublishOnly,
-# which builds + tests again, so the artifact is still verified before it
-# reaches the registry.
-if [ "$IS_CI" = "true" ]; then
-  info "CI mode -- build+tests covered by ci.yml gate and prepublishOnly, skipping"
-else
-  npm run build || fail "Build failed"
-  npm test || fail "Tests failed"
-  info "Build + tests passed"
-fi
+npm run build || fail "Build failed"
+npm test || fail "Tests failed"
+info "Build + tests passed"
 
 # =============================================================================
 # Step 3: Bump version
