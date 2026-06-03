@@ -1045,6 +1045,125 @@ describe("electron_lint_security", () => {
     assert.ok(result.includes("No will-navigate handler"), "construction without guard must flag will-navigate");
     assert.ok(result.includes("No setWindowOpenHandler"), "construction without guard must flag setWindowOpenHandler");
   });
+
+  // --- innerHTML / dangerouslySetInnerHTML is a UNIVERSAL check (security.ts:762-770) ---
+  // It runs before any fileType branch, so it must fire for main, preload, AND
+  // renderer alike. The existing suite only exercised eval() on the universal path;
+  // these pin the innerHTML branch and its fileType-independence.
+  it("flags innerHTML assignment as HIGH in main code", async () => {
+    const result = await tool({
+      code: "function render(el, userInput) { el.innerHTML = userInput; }",
+      fileType: "main",
+    });
+    assert.ok(result.includes("HIGH"), `innerHTML must be HIGH; got:\n${result}`);
+    assert.ok(
+      result.includes("innerHTML / dangerouslySetInnerHTML"),
+      `innerHTML finding must surface its pattern label; got:\n${result}`,
+    );
+  });
+
+  it("flags innerHTML assignment as HIGH in renderer code (universal check, not fileType-gated)", async () => {
+    const result = await tool({
+      code: "document.getElementById('out').innerHTML = data;",
+      fileType: "renderer",
+    });
+    assert.ok(result.includes("HIGH"), `innerHTML must be HIGH for renderer too; got:\n${result}`);
+    assert.ok(result.includes("innerHTML / dangerouslySetInnerHTML"));
+  });
+
+  it("flags dangerouslySetInnerHTML (JSX) as HIGH regardless of fileType", async () => {
+    // dangerouslySetInnerHTML is bare JSX, not a string literal, so it survives
+    // the comment+string scrub and trips the universal innerHTML check.
+    const result = await tool({
+      code: "const App = () => <div dangerouslySetInnerHTML={{ __html: userHtml }} />;",
+      fileType: "preload",
+    });
+    assert.ok(result.includes("HIGH"), `dangerouslySetInnerHTML must be HIGH; got:\n${result}`);
+    assert.ok(result.includes("innerHTML / dangerouslySetInnerHTML"));
+  });
+
+  it("does NOT flag innerHTML mentioned only in a comment or string literal", async () => {
+    // The check scans the comment+string-stripped source, so a docstring or
+    // string-literal mention of `.innerHTML =` must not produce a finding.
+    const result = await tool({
+      code: '// never do el.innerHTML = x\nconst note = "el.innerHTML = x is unsafe";\nfunction add(a, b) { return a + b; }',
+      fileType: "main",
+    });
+    assert.ok(
+      result.includes("CLEAN") || result.includes("No security issues"),
+      `comment/string-only innerHTML mention must stay CLEAN; got:\n${result}`,
+    );
+    assert.ok(
+      !result.includes("innerHTML / dangerouslySetInnerHTML"),
+      `comment/string-only innerHTML mention must not emit the finding; got:\n${result}`,
+    );
+  });
+
+  // --- renderer-process CRITICAL checks (security.ts:826-848) ---
+  // The existing suite covered only `import { ipcRenderer } from 'electron'`.
+  // These pin the require('electron') form AND the node-module-import form, and
+  // confirm both fire together as CRITICAL when present in the same renderer file.
+  it("flags require('electron') in renderer as CRITICAL", async () => {
+    const result = await tool({
+      code: "const { ipcRenderer } = require('electron');",
+      fileType: "renderer",
+    });
+    assert.ok(result.includes("CRITICAL"), `require('electron') in renderer must be CRITICAL; got:\n${result}`);
+    assert.ok(
+      result.includes("Direct electron import in renderer"),
+      `require('electron') must map to the direct-import finding; got:\n${result}`,
+    );
+  });
+
+  it("flags a node-module require (child_process) in renderer as CRITICAL", async () => {
+    const result = await tool({
+      code: "const { exec } = require('child_process');",
+      fileType: "renderer",
+    });
+    assert.ok(result.includes("CRITICAL"), `child_process require in renderer must be CRITICAL; got:\n${result}`);
+    assert.ok(
+      result.includes("Node.js module import in renderer"),
+      `node-module require must map to the node-module finding; got:\n${result}`,
+    );
+  });
+
+  it("flags a node-module require (fs) in renderer as CRITICAL", async () => {
+    const result = await tool({
+      code: "const fs = require('fs');",
+      fileType: "renderer",
+    });
+    assert.ok(result.includes("CRITICAL"), `fs require in renderer must be CRITICAL; got:\n${result}`);
+    assert.ok(result.includes("Node.js module import in renderer"));
+  });
+
+  it("flags BOTH electron import and a node-module import in the same renderer file (two CRITICALs)", async () => {
+    const result = await tool({
+      code: "import { ipcRenderer } from 'electron';\nconst cp = require('child_process');",
+      fileType: "renderer",
+    });
+    assert.ok(result.includes("Direct electron import in renderer"), `electron import finding missing; got:\n${result}`);
+    assert.ok(result.includes("Node.js module import in renderer"), `node-module finding missing; got:\n${result}`);
+    // Two findings, both CRITICAL -> header reports CRITICAL ISSUES and count of 2.
+    assert.ok(result.includes("CRITICAL ISSUES"), `header should report CRITICAL ISSUES; got:\n${result}`);
+    assert.ok(result.includes("Found 2 issue(s)"), `both renderer findings should be counted; got:\n${result}`);
+  });
+
+  it("does NOT apply the renderer require('electron') check to main fileType", async () => {
+    // The renderer block is fileType-gated. The same require('electron') in main
+    // code must not produce the renderer-specific CRITICAL finding.
+    const result = await tool({
+      code: "const { app } = require('electron');\nfunction add(a, b) { return a + b; }",
+      fileType: "main",
+    });
+    assert.ok(
+      !result.includes("Direct electron import in renderer"),
+      `require('electron') in main must not trip the renderer finding; got:\n${result}`,
+    );
+    assert.ok(
+      !result.includes("Node.js module import in renderer"),
+      `main fileType must not trip the renderer node-module finding; got:\n${result}`,
+    );
+  });
 });
 
 describe("electron_diagnose_build_error", () => {
@@ -1509,6 +1628,47 @@ describe("electron_check_deprecated_apis", () => {
     assert.ok(result.includes("runningUnderARM64Translation"));
     assert.ok(result.includes("REMOVED"), `v41 caller should see REMOVED status; got:\n${result}`);
     assert.ok(result.includes("runningUnderTranslation"));
+  });
+
+  // --- stateful /g regex regression guard (migration.ts:295-327) ---
+  // The scan patterns carry the global (/g) flag and are tested via
+  // `pattern.test(code)`, which advances the regex's lastIndex. If those
+  // regex objects were ever hoisted to module scope (shared across calls),
+  // a non-zero lastIndex left by an earlier call could make a later
+  // `.test()` start past a real match and SKIP it. These tests pin that a
+  // repeated invocation still flags the same deprecated API.
+  it("still flags the same deprecated API on a second invocation (no lastIndex carryover)", async () => {
+    const code = "const view = new BrowserView({});";
+    const first = await tool({ code, electronVersion: 41 });
+    assert.ok(first.includes("BrowserView"), `first call must flag BrowserView; got:\n${first}`);
+    const second = await tool({ code, electronVersion: 41 });
+    assert.ok(
+      second.includes("BrowserView"),
+      `second call must still flag BrowserView (lastIndex must not skip the match); got:\n${second}`,
+    );
+  });
+
+  it("flags consistently across three back-to-back invocations", async () => {
+    const code = "ipcRenderer.sendTo(id, 'ch', data);";
+    for (let i = 0; i < 3; i++) {
+      const result = await tool({ code, electronVersion: 41 });
+      assert.ok(result.includes("REMOVED"), `invocation ${i + 1} must still flag ipcRenderer.sendTo; got:\n${result}`);
+    }
+  });
+
+  it("flags a deprecated API even when an earlier deprecated API was scanned in the prior call", async () => {
+    // Cross-API ordering: a prior call that matched one /g pattern must not
+    // leave state that suppresses a different API's match on the next call.
+    const firstCode = "session.loadExtension('/ext');";
+    const first = await tool({ code: firstCode, electronVersion: 41 });
+    assert.ok(first.includes("session.loadExtension"), `first call must flag session.loadExtension; got:\n${first}`);
+
+    const secondCode = "const view = new BrowserView({});";
+    const second = await tool({ code: secondCode, electronVersion: 41 });
+    assert.ok(
+      second.includes("BrowserView"),
+      `BrowserView must flag even after a prior deprecated-API scan; got:\n${second}`,
+    );
   });
 });
 
