@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { KNOWLEDGE_VERSION } from "../knowledge.js";
-import { stripComments, stripCommentsAndStrings, unsafeOpenExternalCallSites } from "../static-analysis.js";
+import {
+  exposesRawIpcRenderer,
+  stripComments,
+  stripCommentsAndStrings,
+  unsafeOpenExternalCallSites,
+} from "../static-analysis.js";
 
 // Electron's support policy: current stable + previous two majors receive
 // security patches. Derive the supported floor from the embedded knowledge
@@ -55,12 +60,14 @@ export const securityTools = [
       const checks: Array<{ id: number; name: string; status: string; detail: string }> = [];
       const bwConfig = input.browserWindowConfig || "";
       // Strip comments from JS-shaped inputs before scanning so docstrings
-      // and inline notes don't trigger false positives. HTML is left alone
-      // because the CSP / <webview> checks need to see the raw markup.
+      // and inline notes don't trigger false positives. For HTML we strip only
+      // HTML comments (<!-- ... -->) -- the CSP / <webview> checks still need
+      // the real markup, but a Content-Security-Policy / http:// / <webview>
+      // mention inside an HTML comment should not count.
       const mainCode = input.mainCode ? stripComments(input.mainCode) : "";
       const pkgJson = input.packageJson || "";
       const preload = input.preloadCode ? stripComments(input.preloadCode) : "";
-      const html = input.htmlContent || "";
+      const html = (input.htmlContent || "").replace(/<!--[\s\S]*?-->/g, "");
 
       // Default assumes latest supported stable; overridden by explicit input
       // or extracted from package.json. Guard against NaN from malformed input.
@@ -227,17 +234,16 @@ export const securityTools = [
 
       // 10. Preload security
       if (preload) {
-        // Match ipcRenderer as a bare value (`{ ipcRenderer }`, `{ x: ipcRenderer }`)
-        // or as a bare method reference (`{ send: ipcRenderer.send }`). The `[^}]*`
-        // form of the previous regex broke on nested braces -- this bounded pattern
-        // relies on a terminator character instead. Mirrors the regex in
-        // electron_audit_ipc_security so both tools agree on what counts as raw
-        // exposure.
-        const rawExpose =
-          /contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer(?:\.(?:send|invoke|on|once|sendSync|postMessage|sendTo|sendToHost|removeListener|removeAllListeners))?\s*(?:[,}]|$)/.test(
-            preload,
-          );
-        const directAssign = /(?:window|globalThis)\.\w+\s*=/.test(preload);
+        // Detect raw ipcRenderer exposure (the whole object or a bare method
+        // reference) inside an exposeInMainWorld call. Shares
+        // exposesRawIpcRenderer with electron_audit_ipc_security so both tools
+        // agree, and scopes the scan to each call's argument region so an
+        // unrelated later `ipcRenderer` reference in the same file can't cause
+        // a false positive.
+        const rawExpose = exposesRawIpcRenderer(preload);
+        // `(?!=)` keeps a comparison (`typeof window.api === ...`) from being
+        // misread as a direct assignment -- it's a read, not a write.
+        const directAssign = /(?:window|globalThis)\.\w+\s*=(?!=)/.test(preload);
         const hasRemote = /require\s*\(\s*['"]@electron\/remote['"]\s*\)/.test(preload);
 
         if (rawExpose) {
@@ -596,11 +602,15 @@ npm install --save-dev @electron/fuses
         .optional()
         .describe("Whether eval() is needed (some template compilers). Defaults to false."),
       externalConnections: z
-        .array(z.string())
+        .array(
+          z.string().regex(/^[^\s;'"]+$/, "each origin must be a single CSP source token (no spaces, ';', or quotes)"),
+        )
         .optional()
         .describe("External origins the app connects to, e.g. ['https://api.example.com', 'wss://ws.example.com']"),
       externalImages: z
-        .array(z.string())
+        .array(
+          z.string().regex(/^[^\s;'"]+$/, "each origin must be a single CSP source token (no spaces, ';', or quotes)"),
+        )
         .optional()
         .describe("External origins for images, e.g. ['https://cdn.example.com']"),
     }),
@@ -686,8 +696,8 @@ import { session } from "electron";
 const isDev = !app.isPackaged;
 
 const CSP = isDev
-  ? "${devCSP}"
-  : "${prodCSP}";
+  ? ${JSON.stringify(devCSP)}
+  : ${JSON.stringify(prodCSP)};
 
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

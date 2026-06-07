@@ -329,18 +329,18 @@ electron-builder can auto-convert from a 512x512+ PNG if you only provide one fo
       if (input.provider === "github") {
         publishConfig = `  "publish": {
     "provider": "github",
-    "owner": "${input.githubOwner || "your-github-username"}",
-    "repo": "${input.githubRepo || "your-repo-name"}"
+    "owner": ${JSON.stringify(input.githubOwner || "your-github-username")},
+    "repo": ${JSON.stringify(input.githubRepo || "your-repo-name")}
   }`;
       } else if (input.provider === "s3") {
         publishConfig = `  "publish": {
     "provider": "s3",
-    "bucket": "${input.s3Bucket || "your-bucket-name"}"
+    "bucket": ${JSON.stringify(input.s3Bucket || "your-bucket-name")}
   }`;
       } else {
         publishConfig = `  "publish": {
     "provider": "generic",
-    "url": "${input.genericUrl || "https://updates.example.com"}"
+    "url": ${JSON.stringify(input.genericUrl || "https://updates.example.com")}
   }`;
       }
 
@@ -514,7 +514,13 @@ ${publishConfig},
       openWorldHint: false,
     },
     inputSchema: z.object({
-      protocol: z.string().describe("Custom protocol scheme, e.g. 'myapp' (will handle myapp:// URLs)"),
+      protocol: z
+        .string()
+        .regex(
+          /^[a-zA-Z][a-zA-Z0-9+.-]*(?::\/\/.*)?$/,
+          "protocol must be a valid URI scheme: a letter followed by letters, digits, +, -, or . (an optional '://...' suffix is allowed and stripped)",
+        )
+        .describe("Custom protocol scheme, e.g. 'myapp' (will handle myapp:// URLs)"),
       singleInstance: z
         .boolean()
         .optional()
@@ -601,22 +607,22 @@ export function handleDeepLink(url: string): void {
     // is consistent regardless of how the OS handed the URL to us.
     const rawPath = parsed.pathname || "";
     const host = parsed.host || "";
-    const path = host
+    const linkPath = host
       ? \`/\${host}\${rawPath}\`
       : rawPath.startsWith("/")
         ? rawPath
         : \`/\${rawPath}\`;
     const params = Object.fromEntries(parsed.searchParams);
 
-    console.log(\`Deep link: path=\${path}, params=\${JSON.stringify(params)}\`);
+    console.log(\`Deep link: path=\${linkPath}, params=\${JSON.stringify(params)}\`);
 
     // Route the deep link
     const mainWindow = BrowserWindow.getAllWindows()[0];
     if (mainWindow) {
-      mainWindow.webContents.send("deep-link", { path, params, raw: url });
+      mainWindow.webContents.send("deep-link", { path: linkPath, params, raw: url });
     }${
       input.routes
-        ? `\n\n    // Handle specific routes\n    switch (true) {\n${input.routes.map((r) => `      case path.startsWith("${r.path.replace("/*", "")}"): // ${r.description}\n        break;`).join("\n")}\n      default:\n        console.warn(\`Unknown deep link path: \${path}\`);\n    }`
+        ? `\n\n    // Handle specific routes\n    switch (true) {\n${input.routes.map((r) => `      case linkPath.startsWith(${JSON.stringify(r.path.replace("/*", ""))}): // ${r.description.replace(/[\r\n]+/g, " ")}\n        break;`).join("\n")}\n      default:\n        console.warn(\`Unknown deep link path: \${linkPath}\`);\n    }`
         : ""
     }
   } catch (err) {
@@ -742,7 +748,13 @@ xdg-open "${proto}://some/path?key=value"
       openWorldHint: false,
     },
     inputSchema: z.object({
-      name: z.string().describe("Project name (lowercase, hyphens ok), e.g. 'my-electron-app'"),
+      name: z
+        .string()
+        .regex(
+          /^[a-z0-9][a-z0-9._-]*$/,
+          "name must be lowercase npm-package-safe (letters, digits, '.', '_', '-') -- no spaces, quotes, or shell metacharacters that could break the generated commands",
+        )
+        .describe("Project name (lowercase, hyphens ok), e.g. 'my-electron-app'"),
       framework: z
         .enum(["react", "vue", "svelte", "vanilla"])
         .optional()

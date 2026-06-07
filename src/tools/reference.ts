@@ -174,6 +174,7 @@ Fuses disable these attack vectors at the binary level.
 | NodeCliInspect | DISABLE | Blocks --inspect flag |
 | EmbeddedAsarIntegrity | ENABLE | Validates ASAR hasn't been tampered with |
 | OnlyLoadAppFromAsar | ENABLE | Prevents loading from loose files |
+| LoadBrowserProcessSpecificV8Snapshot | DISABLE | Uses the standard V8 snapshot, not a browser-specific one |
 | GrantFileProtocolExtraPrivileges | DISABLE | Restricts file:// protocol capabilities |
 
 ## How to apply

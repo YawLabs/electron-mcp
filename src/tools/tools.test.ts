@@ -87,6 +87,39 @@ describe("tool registration", () => {
 describe("electron_scaffold_ipc_channel", () => {
   const tool = byName("electron_scaffold_ipc_channel");
 
+  it("rejects channelName / apiNamespace that could break or inject into generated code", () => {
+    const schema = schemaOf("electron_scaffold_ipc_channel");
+    for (const channelName of ['x"); evil(); ("', "a\nb", "with space", "a`b", "a$b"]) {
+      const parsed = schema.safeParse({ channelName, direction: "renderer-to-main", description: "d" });
+      assert.strictEqual(parsed.success, false, `should reject channelName ${JSON.stringify(channelName)}`);
+    }
+    for (const apiNamespace of ["a-b", "1abc", "a.b", 'a"b']) {
+      const parsed = schema.safeParse({
+        channelName: "ok",
+        direction: "renderer-to-main",
+        description: "d",
+        apiNamespace,
+      });
+      assert.strictEqual(parsed.success, false, `should reject apiNamespace ${JSON.stringify(apiNamespace)}`);
+    }
+    for (const channelName of ["get-user", "app:quit", "save.settings", "open_file"]) {
+      const parsed = schema.safeParse({ channelName, direction: "renderer-to-main", description: "d" });
+      assert.strictEqual(parsed.success, true, `should accept channelName ${JSON.stringify(channelName)}`);
+    }
+  });
+
+  it("collapses newlines in description so the generated // comment stays single-line", async () => {
+    const result = await tool({
+      channelName: "do-thing",
+      direction: "renderer-to-main",
+      description: "line one\nthrow new Error('x') // line two",
+    });
+    assert.ok(
+      result.includes("// line one throw new Error('x') // line two"),
+      `description newline must be collapsed into the comment; got:\n${result}`,
+    );
+  });
+
   it("generates IPC boilerplate for renderer-to-main invoke", async () => {
     const result = await tool({
       channelName: "get-user",
@@ -157,6 +190,17 @@ describe("electron_scaffold_ipc_channel", () => {
 describe("electron_generate_preload_bridge", () => {
   const tool = byName("electron_generate_preload_bridge");
 
+  it("rejects a method name that is not a valid identifier", () => {
+    const schema = schemaOf("electron_generate_preload_bridge");
+    const parsed = schema.safeParse({ methods: [{ name: "bad-name", channel: "c", type: "invoke" }] });
+    assert.strictEqual(parsed.success, false);
+  });
+
+  it("JSON-escapes the channel so a quote in it can't break the generated invoke call", async () => {
+    const result = await tool({ methods: [{ name: "doThing", channel: 'a"b', type: "invoke" }] });
+    assert.ok(result.includes(JSON.stringify('a"b')), `channel must be JSON-escaped; got:\n${result}`);
+  });
+
   it("emits contextBridge + type declarations for multiple methods", async () => {
     const result = await tool({
       methods: [
@@ -193,6 +237,20 @@ describe("electron_generate_preload_bridge", () => {
 
 describe("electron_audit_ipc_security", () => {
   const tool = byName("electron_audit_ipc_security");
+
+  it("does NOT flag a safe bridge followed by an unrelated bare ipcRenderer reference", async () => {
+    // Regression: the rawExposure scan previously spanned the whole file, so a
+    // safe wrapped bridge plus a later local `{ ipcRenderer }` (never exposed)
+    // produced a false CRITICAL.
+    const result = await tool({
+      preloadCode: `contextBridge.exposeInMainWorld('api', { getData: () => ipcRenderer.invoke('d') });
+const debug = { contextBridge, ipcRenderer };`,
+    });
+    assert.ok(
+      result.includes("PASSED") || result.includes("No security issues"),
+      `safe bridge + unrelated bare ipcRenderer must not flag; got:\n${result}`,
+    );
+  });
 
   it("flags raw ipcRenderer exposure as CRITICAL", async () => {
     const result = await tool({
@@ -310,6 +368,45 @@ describe("electron_audit_ipc_security", () => {
     });
     assert.ok(/without cleanup|memory leak/i.test(result), `listener-without-cleanup must surface; got:\n${result}`);
     assert.ok(result.includes("LOW"), `expected LOW severity for listener leak; got:\n${result}`);
+  });
+
+  it("does NOT flag a window.* comparison as a direct assignment", async () => {
+    // Regression: the assignment regex matched the first `=` of `==` / `===`,
+    // so feature-detection like `typeof window.api === "undefined"` was
+    // misreported as a direct window assignment.
+    const result = await tool({
+      preloadCode: `if (typeof window.api === "undefined") { /* set up */ }`,
+    });
+    assert.ok(
+      !/Direct window property assignment/i.test(result),
+      `a window.* comparison must not be flagged as assignment; got:\n${result}`,
+    );
+  });
+
+  it("does NOT flag raw ipcRenderer exposure that appears only in a comment", async () => {
+    // Regression: preloadCode was scanned without stripping comments, so a
+    // commented-out bad example fired a false CRITICAL.
+    const result = await tool({
+      preloadCode: `// Bad example -- never do this:
+// contextBridge.exposeInMainWorld('api', { ipcRenderer })
+const api = { getData: () => ipcRenderer.invoke('get-data') };
+contextBridge.exposeInMainWorld('api', api);`,
+    });
+    assert.ok(
+      result.includes("PASSED") || result.includes("No security issues"),
+      `commented-out raw exposure must not flag; got:\n${result}`,
+    );
+  });
+
+  it("does NOT flag a commented-out electron import in renderer code", async () => {
+    // Regression: rendererCode was scanned without stripping comments.
+    const result = await tool({
+      rendererCode: `// import { ipcRenderer } from 'electron'\nwindow.api.doThing();`,
+    });
+    assert.ok(
+      result.includes("PASSED") || result.includes("No security issues"),
+      `commented-out renderer import must not flag; got:\n${result}`,
+    );
   });
 });
 
@@ -512,6 +609,19 @@ describe("electron_explain_process_model", () => {
 
 describe("electron_audit_security", () => {
   const tool = byName("electron_audit_security");
+
+  it("#10 does NOT fire on a safe bridge followed by an unrelated bare ipcRenderer reference", async () => {
+    // Regression: the rawExposure scan spanned the whole file; a safe wrapped
+    // bridge plus a later unrelated `{ ipcRenderer }` produced a false #10.
+    const result = await tool({
+      preloadCode: `contextBridge.exposeInMainWorld('api', { getData: () => ipcRenderer.invoke('d') });
+const debug = { contextBridge, ipcRenderer };`,
+    });
+    assert.ok(
+      !result.includes("Do not expose ipcRenderer directly"),
+      `#10 must not fire on a safe wrapped bridge; got:\n${result}`,
+    );
+  });
 
   it("detects nodeIntegration: true", async () => {
     const result = await tool({
@@ -774,6 +884,13 @@ describe("electron_audit_security", () => {
     assert.strictEqual(statusOf(result, 11), "FAIL", `direct window assignment should FAIL #11; got:\n${result}`);
   });
 
+  it("#11 does NOT fire on a window.* comparison (read, not assignment)", async () => {
+    // Regression: the assignment regex matched the `=` of `===`, so a
+    // comparison like `typeof window.api === "undefined"` falsely FAILed #11.
+    const result = await tool({ preloadCode: `if (typeof window.api === "undefined") {}` });
+    assert.strictEqual(statusOf(result, 11), null, `window.* comparison must not FAIL #11; got:\n${result}`);
+  });
+
   it("#12 WARNs when preload imports @electron/remote", async () => {
     const result = await tool({ preloadCode: `const remote = require('@electron/remote');` });
     assert.strictEqual(statusOf(result, 12), "WARN", `@electron/remote should WARN #12; got:\n${result}`);
@@ -825,6 +942,18 @@ describe("electron_configure_fuses", () => {
 
 describe("electron_configure_csp", () => {
   const tool = byName("electron_configure_csp");
+
+  it("rejects external origins that could inject a CSP directive", () => {
+    const schema = schemaOf("electron_configure_csp");
+    for (const bad of ["https://x; script-src *", "https://a b", `https://x"`, "'unsafe-inline'"]) {
+      assert.strictEqual(
+        schema.safeParse({ externalConnections: [bad] }).success,
+        false,
+        `should reject external origin ${JSON.stringify(bad)}`,
+      );
+    }
+    assert.strictEqual(schema.safeParse({ externalConnections: ["https://api.example.com"] }).success, true);
+  });
 
   it("generates default CSP without unsafe directives", async () => {
     const result = await tool({});
@@ -1141,7 +1270,10 @@ describe("electron_lint_security", () => {
       code: "import { ipcRenderer } from 'electron';\nconst cp = require('child_process');",
       fileType: "renderer",
     });
-    assert.ok(result.includes("Direct electron import in renderer"), `electron import finding missing; got:\n${result}`);
+    assert.ok(
+      result.includes("Direct electron import in renderer"),
+      `electron import finding missing; got:\n${result}`,
+    );
     assert.ok(result.includes("Node.js module import in renderer"), `node-module finding missing; got:\n${result}`);
     // Two findings, both CRITICAL -> header reports CRITICAL ISSUES and count of 2.
     assert.ok(result.includes("CRITICAL ISSUES"), `header should report CRITICAL ISSUES; got:\n${result}`);
@@ -1377,6 +1509,11 @@ describe("electron_diagnose_build_error", () => {
 describe("electron_configure_auto_update", () => {
   const tool = byName("electron_configure_auto_update");
 
+  it("JSON-escapes owner/repo so a quote can't break the generated JSON", async () => {
+    const result = await tool({ provider: "github", githubOwner: 'a"b', githubRepo: "ok" });
+    assert.ok(result.includes(JSON.stringify('a"b')), `owner must be JSON-escaped; got:\n${result}`);
+  });
+
   it("github provider embeds owner and repo", async () => {
     const result = await tool({
       provider: "github",
@@ -1481,13 +1618,24 @@ describe("electron_configure_deep_linking", () => {
       /host\s*\?\s*`\/\$\{host\}\$\{rawPath\}`/.test(mainCode),
       `path normalization must combine host and pathname into a single leading-slash path; got:\n${mainCode}`,
     );
-    // Sanity: the normalized 'path' is what's sent to the renderer.
-    assert.ok(/send\("deep-link",\s*\{\s*path,/.test(mainCode));
+    // Sanity: the normalized path is what's sent to the renderer (the local
+    // variable is `linkPath` to avoid shadowing the node:path import).
+    assert.ok(/send\("deep-link",\s*\{\s*path:\s*linkPath,/.test(mainCode));
   });
 });
 
 describe("electron_scaffold_project", () => {
   const tool = byName("electron_scaffold_project");
+
+  it("rejects a project name with shell metacharacters or uppercase", () => {
+    const schema = schemaOf("electron_scaffold_project");
+    for (const name of ["my app", "a; rm -rf ~", "Foo", 'a"b', "a`b"]) {
+      assert.strictEqual(schema.safeParse({ name }).success, false, `should reject name ${JSON.stringify(name)}`);
+    }
+    for (const name of ["my-app", "app_2", "a.b"]) {
+      assert.strictEqual(schema.safeParse({ name }).success, true, `should accept name ${JSON.stringify(name)}`);
+    }
+  });
 
   it("default scaffold uses electron-vite + react", async () => {
     const result = await tool({ name: "my-app" });

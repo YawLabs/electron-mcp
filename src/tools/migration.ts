@@ -211,6 +211,8 @@ export const migrationTools = [
           for (const c of changes) {
             sections.push(`### [${c.severity}] ${c.change}\n\n${c.migration}\n`);
             totalChanges++;
+            // Current data is only LOW / MEDIUM; HIGH is reserved for any
+            // future high-impact change and is counted here when it appears.
             if (c.severity === "MEDIUM" || c.severity === "HIGH") mediumOrHighChanges++;
           }
         }

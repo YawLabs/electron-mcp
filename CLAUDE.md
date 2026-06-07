@@ -4,13 +4,19 @@ Electron.js MCP server — IPC scaffolding, security auditing, build diagnostics
 
 ## Architecture
 
-- `src/index.ts` — Entry point. Registers all tools with McpServer, handles version subcommand.
+18 tools total, across seven tool modules plus two shared support modules.
+
+- `src/index.ts` — Entry point. Registers all tools with McpServer, appends the knowledge footer, handles version subcommand.
+- `src/version.ts` — Resolves the package version (esbuild `__VERSION__` define, with a tsc-path `package.json` fallback).
+- `src/knowledge.ts` — Single source of truth for the embedded-knowledge vintage (`KNOWLEDGE_VERSION`) and the `knowledgeFooter()` appended to tool output.
+- `src/static-analysis.ts` — Shared lexical-scrub utilities (`stripComments`, `stripCommentsAndStrings`, `unsafeOpenExternalCallSites`) used by the analysis tools so each inherits the same comment/string handling.
 - `src/tools/ipc.ts` — IPC & process architecture tools (5 tools): scaffold channels, generate preload bridges, audit IPC security, window manager, process model explanation.
 - `src/tools/security.ts` — Security tools (4 tools): comprehensive audit, fuses config, CSP generation, security linting.
 - `src/tools/build.ts` — Build & distribution tools (4 tools): error diagnosis, auto-update config, deep linking, project scaffolding.
 - `src/tools/migration.ts` — Migration tools (2 tools): version migration checklist, deprecated API scanner. Contains embedded breaking changes database for Electron v28-v41.
-- `src/tools/performance.ts` — Performance tool (1 tool): detects 8 official anti-patterns.
+- `src/tools/performance.ts` — Performance tool (1 tool): detects 7 official anti-patterns.
 - `src/tools/reference.ts` — Reference tool (1 tool): authoritative concept explainer with 8 topics.
+- `src/tools/knowledge.ts` — Knowledge metadata tool (1 tool): `electron_knowledge_version` reports the embedded-knowledge vintage and supported version range.
 
 ## Key differences from other @yawlabs MCPs
 
