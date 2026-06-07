@@ -12,7 +12,7 @@ export const performanceTools = [
   {
     name: "electron_audit_performance",
     description:
-      "Analyze Electron app code for the 8 official performance anti-patterns: eager module loading, synchronous main-process operations, unnecessary polyfills, unbundled code, CDN-loaded assets, renderer blocking, excessive BrowserWindows, and IPC over-communication. Returns specific fixes.",
+      "Analyze Electron app code for 7 official performance anti-patterns: eager module loading, synchronous main-process operations, excessive BrowserWindows at startup, unnecessary polyfills, CDN-loaded assets, heavy preload scripts, and unbundled dependencies. Returns specific fixes.",
     annotations: {
       title: "Audit performance",
       readOnlyHint: true,
@@ -77,7 +77,7 @@ export const performanceTools = [
           // scope so the equivalent constraint is automatic for it.
           const eagerPattern = new RegExp(
             `(?:^|\\n)import\\s[^;\\n]*from\\s+['"]${m}['"]` +
-              `|(?:^|\\n)(?:const|let|var)\\s+[^=\\n]*=\\s*require\\s*\\(\\s*['"]${m}['"]`,
+              `|(?:^|\\n)(?:export\\s+)?(?:const|let|var)\\s+[^=\\n]*=\\s*require\\s*\\(\\s*['"]${m}['"]`,
             "m",
           );
           if (eagerPattern.test(code)) {
@@ -160,7 +160,7 @@ export const performanceTools = [
         }
 
         // 5. CDN-loaded resources
-        if (/https?:\/\/(?:cdn|unpkg|jsdelivr|cdnjs)/.test(code)) {
+        if (/https?:\/\/(?:cdn|unpkg|jsdelivr|cdnjs)\b/.test(code)) {
           findings.push({
             pattern: "CDN-loaded resources",
             severity: "MEDIUM",

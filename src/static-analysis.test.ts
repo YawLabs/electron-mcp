@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import {
+  exposesRawIpcRenderer,
   hasUnsafeOpenExternal,
   stripComments,
   stripCommentsAndStrings,
@@ -152,5 +153,52 @@ describe("unsafeOpenExternalCallSites", () => {
   it("hasUnsafeOpenExternal mirrors unsafeOpenExternalCallSites().length > 0", () => {
     assert.strictEqual(hasUnsafeOpenExternal(`shell.openExternal("https://example.com");`), false);
     assert.strictEqual(hasUnsafeOpenExternal("shell.openExternal(url);"), true);
+  });
+
+  it("treats a hardcoded https literal containing ) and , as safe (not truncated)", () => {
+    // Regression: the `[^,)]+` capture stopped at the first ) inside the URL,
+    // leaving an unterminated literal that then failed the safe-literal test.
+    const out = unsafeOpenExternalCallSites(`shell.openExternal("https://en.wikipedia.org/wiki/Foo_(bar),baz");`);
+    assert.strictEqual(
+      out.length,
+      0,
+      `https literal containing ()/, must be read whole and treated as safe; got: ${JSON.stringify(out)}`,
+    );
+  });
+});
+
+describe("exposesRawIpcRenderer", () => {
+  it("flags the whole ipcRenderer object exposed via contextBridge", () => {
+    assert.strictEqual(exposesRawIpcRenderer(`contextBridge.exposeInMainWorld("api", { ipcRenderer })`), true);
+  });
+
+  it("flags a bare method reference exposed via contextBridge", () => {
+    assert.strictEqual(
+      exposesRawIpcRenderer(`contextBridge.exposeInMainWorld("api", { send: ipcRenderer.send })`),
+      true,
+    );
+  });
+
+  it("does NOT flag a wrapped invoke", () => {
+    assert.strictEqual(
+      exposesRawIpcRenderer(`contextBridge.exposeInMainWorld("api", { getData: () => ipcRenderer.invoke("d") })`),
+      false,
+    );
+  });
+
+  it("does NOT flag a safe bridge followed by an unrelated bare ipcRenderer reference", () => {
+    // Regression: an unbounded [\s\S]*? span let a safe exposeInMainWorld match
+    // any later bare `ipcRenderer` token; the scan is now scoped to each call's
+    // balanced-paren argument region.
+    const code = [
+      `contextBridge.exposeInMainWorld("api", { getData: () => ipcRenderer.invoke("d") });`,
+      "const debug = { contextBridge, ipcRenderer };",
+    ].join("\n");
+    assert.strictEqual(exposesRawIpcRenderer(code), false);
+  });
+
+  it("does NOT flag a string literal that merely mentions ipcRenderer inside the call", () => {
+    const code = `contextBridge.exposeInMainWorld("api", { note: "wraps ipcRenderer, safely", get: () => ipcRenderer.invoke("d") })`;
+    assert.strictEqual(exposesRawIpcRenderer(code), false);
   });
 });

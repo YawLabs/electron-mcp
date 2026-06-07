@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { KNOWLEDGE_VERSION } from "../knowledge.js";
-import { hasUnsafeOpenExternal, stripComments } from "../static-analysis.js";
+import { exposesRawIpcRenderer, hasUnsafeOpenExternal, stripComments } from "../static-analysis.js";
 
 export const ipcTools = [
   {
@@ -18,6 +18,10 @@ export const ipcTools = [
       channelName: z
         .string()
         .max(200)
+        .regex(
+          /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/,
+          "channelName must be a channel-safe token (letters, digits, '.', '_', ':', '-') -- no quotes, spaces, '$', or newlines that could break the generated source",
+        )
         .describe("The IPC channel name, e.g. 'get-user-data', 'save-settings', 'open-file-dialog'"),
       direction: z
         .enum(["renderer-to-main", "main-to-renderer", "bidirectional"])
@@ -29,11 +33,13 @@ export const ipcTools = [
       args: z
         .string()
         .max(1000)
+        .regex(/^[^`\r\n]*$/, "args type must not contain backticks or newlines")
         .optional()
         .describe("TypeScript type for the arguments, e.g. '{ userId: string }' or 'string'. Omit for no arguments."),
       returnType: z
         .string()
         .max(1000)
+        .regex(/^[^`\r\n]*$/, "returnType must not contain backticks or newlines")
         .optional()
         .describe(
           "TypeScript type for the return value (renderer-to-main only), e.g. '{ name: string; email: string }'. Omit for void.",
@@ -41,6 +47,7 @@ export const ipcTools = [
       apiNamespace: z
         .string()
         .max(100)
+        .regex(/^[a-zA-Z_$][\w$]*$/, "apiNamespace must be a valid JS identifier")
         .optional()
         .describe(
           "The namespace on window.electronAPI to group this under, e.g. 'users', 'settings'. Defaults to 'api'.",
@@ -56,6 +63,9 @@ export const ipcTools = [
     }) => {
       const ns = input.apiNamespace || "api";
       const camelName = input.channelName.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      // Newlines in a free-text description would break out of the `// ...`
+      // line comments in the generated handler/preload, so collapse them.
+      const descComment = input.description.replace(/[\r\n]+/g, " ");
       const argType = input.args || "void";
       const retType = input.returnType || "void";
       const hasArgs = argType !== "void";
@@ -75,7 +85,7 @@ import { ipcMain } from "electron";
 export function register${camelName.charAt(0).toUpperCase() + camelName.slice(1)}Handler(): void {
   ipcMain.handle("${input.channelName}", async (_event${hasArgs ? `, args: ${argType}` : ""}): Promise<${retType}> => {
     // TODO: Implement handler logic
-    // ${input.description}
+    // ${descComment}
     throw new Error("Not implemented");
   });
 }`
@@ -85,7 +95,7 @@ import { ipcMain } from "electron";
 export function register${camelName.charAt(0).toUpperCase() + camelName.slice(1)}Handler(): void {
   ipcMain.on("${input.channelName}", (_event${hasArgs ? `, args: ${argType}` : ""}) => {
     // TODO: Implement handler logic
-    // ${input.description}
+    // ${descComment}
   });
 }`;
 
@@ -248,17 +258,27 @@ window.${ns}.${camelName}(${hasArgs ? "args" : ""});`;
       methods: z
         .array(
           z.object({
-            name: z.string().max(200).describe("Method name exposed to renderer, e.g. 'openFile', 'saveSettings'"),
+            name: z
+              .string()
+              .max(200)
+              .regex(/^[a-zA-Z_$][\w$]*$/, "method name must be a valid JS identifier")
+              .describe("Method name exposed to renderer, e.g. 'openFile', 'saveSettings'"),
             channel: z.string().max(200).describe("IPC channel name, e.g. 'open-file', 'save-settings'"),
             type: z
               .enum(["invoke", "send", "on"])
               .describe(
                 "'invoke' for request/response (ipcRenderer.invoke), 'send' for fire-and-forget (ipcRenderer.send), 'on' for listening to main process events",
               ),
-            args: z.string().max(1000).optional().describe("TypeScript type for arguments, e.g. '{ path: string }'"),
+            args: z
+              .string()
+              .max(1000)
+              .regex(/^[^`\r\n]*$/, "args type must not contain backticks or newlines")
+              .optional()
+              .describe("TypeScript type for arguments, e.g. '{ path: string }'"),
             returnType: z
               .string()
               .max(1000)
+              .regex(/^[^`\r\n]*$/, "returnType must not contain backticks or newlines")
               .optional()
               .describe("TypeScript return type (invoke only), e.g. 'string[]'"),
             description: z.string().max(500).optional().describe("What this method does"),
@@ -269,6 +289,7 @@ window.${ns}.${camelName}(${hasArgs ? "args" : ""});`;
       namespace: z
         .string()
         .max(100)
+        .regex(/^[a-zA-Z_$][\w$]*$/, "namespace must be a valid JS identifier")
         .optional()
         .describe("The property name on window, e.g. 'electronAPI'. Defaults to 'electronAPI'."),
     }),
@@ -291,17 +312,17 @@ window.${ns}.${camelName}(${hasArgs ? "args" : ""});`;
 
       for (const m of input.methods) {
         const hasArgs = m.args && m.args !== "void";
-        const desc = m.description ? `  // ${m.description}\n` : "";
+        const desc = m.description ? `  // ${m.description.replace(/[\r\n]+/g, " ")}\n` : "";
 
         if (m.type === "invoke") {
           const ret = m.returnType || "void";
           methodLines.push(
-            `${desc}    ${m.name}: (${hasArgs ? `args: ${m.args}` : ""}): Promise<${ret}> => ipcRenderer.invoke("${m.channel}"${hasArgs ? ", args" : ""}),`,
+            `${desc}    ${m.name}: (${hasArgs ? `args: ${m.args}` : ""}): Promise<${ret}> => ipcRenderer.invoke(${JSON.stringify(m.channel)}${hasArgs ? ", args" : ""}),`,
           );
           typeLines.push(`  ${m.name}(${hasArgs ? `args: ${m.args}` : ""}): Promise<${ret}>;`);
         } else if (m.type === "send") {
           methodLines.push(
-            `${desc}    ${m.name}: (${hasArgs ? `args: ${m.args}` : ""}): void => ipcRenderer.send("${m.channel}"${hasArgs ? ", args" : ""}),`,
+            `${desc}    ${m.name}: (${hasArgs ? `args: ${m.args}` : ""}): void => ipcRenderer.send(${JSON.stringify(m.channel)}${hasArgs ? ", args" : ""}),`,
           );
           typeLines.push(`  ${m.name}(${hasArgs ? `args: ${m.args}` : ""}): void;`);
         } else {
@@ -310,8 +331,8 @@ window.${ns}.${camelName}(${hasArgs ? "args" : ""});`;
           methodLines.push(
             `${desc}    ${m.name}: (callback: (data: ${argType}) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: ${argType}) => callback(data);
-      ipcRenderer.on("${m.channel}", handler);
-      return () => ipcRenderer.removeListener("${m.channel}", handler);
+      ipcRenderer.on(${JSON.stringify(m.channel)}, handler);
+      return () => ipcRenderer.removeListener(${JSON.stringify(m.channel)}, handler);
     },`,
           );
           typeLines.push(`  ${m.name}(callback: (data: ${argType}) => void): () => void;`);
@@ -383,17 +404,21 @@ declare global {
       const findings: Array<{ severity: string; issue: string; detail: string; fix: string }> = [];
 
       if (input.preloadCode) {
-        const code = input.preloadCode;
+        // Strip comments so a commented-out example (a tutorial snippet
+        // pasted verbatim) doesn't fire findings -- mirrors the mainCode
+        // path below and the preload handling in electron_audit_security.
+        // String literals are intentionally preserved: the checks below key
+        // off channel/module string contents.
+        const code = stripComments(input.preloadCode);
 
-        // Check for raw ipcRenderer exposure.
-        // Matches `ipcRenderer` as a bare value (shorthand `{ ipcRenderer }`, `{ x: ipcRenderer }`)
-        // OR a bare method reference like `{ send: ipcRenderer.send }` where `send`/`invoke`/`on` etc.
-        // are passed as the exposed value directly (not as a call target inside a wrapping function).
-        // `ipcRenderer.invoke('x')` inside a closure still won't match because `(` is not in the
-        // terminator set -- only object/object-member terminators are.
-        const rawExposureRe =
-          /contextBridge\.exposeInMainWorld[\s\S]*?\bipcRenderer(?:\.(?:send|invoke|on|once|sendSync|postMessage|sendTo|sendToHost|removeListener|removeAllListeners))?\s*(?:[,}]|$)/;
-        if (rawExposureRe.test(code)) {
+        // Check for raw ipcRenderer exposure: the whole `ipcRenderer` object
+        // (`{ ipcRenderer }`, `{ x: ipcRenderer }`) or a bare method reference
+        // (`{ send: ipcRenderer.send }`) passed as an exposed value. A wrapped
+        // `ipcRenderer.invoke('x')` inside a closure is not flagged. Detection
+        // is scoped to each exposeInMainWorld argument region (see
+        // exposesRawIpcRenderer), so an unrelated later `ipcRenderer` reference
+        // elsewhere in the file can't trigger a false positive.
+        if (exposesRawIpcRenderer(code)) {
           findings.push({
             severity: "CRITICAL",
             issue: "Raw ipcRenderer exposed through contextBridge",
@@ -436,8 +461,10 @@ declare global {
           });
         }
 
-        // Check for window.* direct assignment
-        if (/(?:window|globalThis)\.\w+\s*=/.test(code)) {
+        // Check for window.* direct assignment. The `(?!=)` prevents matching
+        // the `==` / `===` of a comparison (e.g. `typeof window.api === ...`),
+        // which is a read, not an assignment.
+        if (/(?:window|globalThis)\.\w+\s*=(?!=)/.test(code)) {
           findings.push({
             severity: "HIGH",
             issue: "Direct window property assignment in preload",
@@ -492,7 +519,10 @@ declare global {
       }
 
       if (input.rendererCode) {
-        const code = input.rendererCode;
+        // Strip comments so a commented-out `import ... from "electron"`
+        // example doesn't fire the direct-import finding (matches the
+        // renderer handling in electron_lint_security).
+        const code = stripComments(input.rendererCode);
 
         // Check for direct require('electron') in renderer
         if (/require\s*\(\s*['"]electron['"]\s*\)/.test(code) || /from\s+['"]electron['"]/.test(code)) {
@@ -872,28 +902,28 @@ app.on("activate", () => {
 Electron apps run in multiple processes, similar to Chromium:
 
 \`\`\`
-┌─────────────────────────────────────────────┐
-│                MAIN PROCESS                  │
-│  (Node.js -- one per app)                    │
-│                                              │
-│  * App lifecycle (app module)               │
-│  * Creates BrowserWindows                   │
-│  * Native APIs (dialog, menu, tray, etc.)   │
-│  * IPC handler (ipcMain)                    │
-│  * File system, networking, databases       │
-├─────────────────────────────────────────────┤
-│         ▲ IPC (structured clone) ▼          │
-├──────────────┬──────────────┬───────────────┤
-│  RENDERER 1  │  RENDERER 2  │  RENDERER N   │
-│  (Chromium)  │  (Chromium)  │  (Chromium)   │
-│              │              │               │
-│  * HTML/CSS  │  * HTML/CSS  │  * HTML/CSS   │
-│  * React/Vue │  * React/Vue │  * React/Vue  │
-│  * DOM APIs  │  * DOM APIs  │  * DOM APIs   │
-│              │              │               │
-│  preload.js  │  preload.js  │  preload.js   │
-│  (bridge)    │  (bridge)    │  (bridge)     │
-└──────────────┴──────────────┴───────────────┘
++---------------------------------------------+
+|                MAIN PROCESS                  |
+|  (Node.js -- one per app)                    |
+|                                              |
+|  * App lifecycle (app module)               |
+|  * Creates BrowserWindows                   |
+|  * Native APIs (dialog, menu, tray, etc.)   |
+|  * IPC handler (ipcMain)                    |
+|  * File system, networking, databases       |
++---------------------------------------------+
+|         ^ IPC (structured clone) v          |
++--------------+--------------+---------------+
+|  RENDERER 1  |  RENDERER 2  |  RENDERER N   |
+|  (Chromium)  |  (Chromium)  |  (Chromium)   |
+|              |              |               |
+|  * HTML/CSS  |  * HTML/CSS  |  * HTML/CSS   |
+|  * React/Vue |  * React/Vue |  * React/Vue  |
+|  * DOM APIs  |  * DOM APIs  |  * DOM APIs   |
+|              |              |               |
+|  preload.js  |  preload.js  |  preload.js   |
+|  (bridge)    |  (bridge)    |  (bridge)     |
++--------------+--------------+---------------+
 \`\`\`
 
 ## Key Rules
@@ -1062,22 +1092,22 @@ new BrowserWindow({
 ## The mental model
 
 \`\`\`
-┌─────────────────────────────────────┐
-│         Renderer Process            │
-│                                     │
-│  ┌──────────────┐ ┌──────────────┐ │
-│  │ Preload      │ │ Web Page     │ │
-│  │ Context      │ │ Context      │ │
-│  │              │ │              │ │
-│  │ ipcRenderer  │ │ React/Vue    │ │
-│  │ contextBridge│ │ Your app UI  │ │
-│  │              │ │              │ │
-│  │ window (A)   │ │ window (B)   │ │
-│  └──────┬───────┘ └──────┬───────┘ │
-│         │                 │         │
-│         └──contextBridge──┘         │
-│         (structured clone)          │
-└─────────────────────────────────────┘
++-------------------------------------+
+|         Renderer Process            |
+|                                     |
+|  +--------------+ +--------------+ |
+|  | Preload      | | Web Page     | |
+|  | Context      | | Context      | |
+|  |              | |              | |
+|  | ipcRenderer  | | React/Vue    | |
+|  | contextBridge| | Your app UI  | |
+|  |              | |              | |
+|  | window (A)   | | window (B)   | |
+|  +------+-------+ +------+-------+ |
+|         |                 |         |
+|         +--contextBridge--+         |
+|         (structured clone)          |
++-------------------------------------+
 \`\`\``,
 
         sandbox: `# Sandbox
@@ -1138,7 +1168,7 @@ Some use cases require an unsandboxed preload (e.g., native module access in pre
 
 \`\`\`typescript
 webPreferences: {
-  sandbox: false,  // ⚠ Only if absolutely necessary
+  sandbox: false,  // WARNING: only if absolutely necessary
 }
 \`\`\`
 

@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { knowledgeFooter } from "./knowledge.js";
 import { buildTools } from "./tools/build.js";
 import { ipcTools } from "./tools/ipc.js";
-import { knowledgeTools } from "./tools/knowledge.js";
+import { KNOWLEDGE_VERSION_TOOL_NAME, knowledgeTools } from "./tools/knowledge.js";
 import { migrationTools } from "./tools/migration.js";
 import { performanceTools } from "./tools/performance.js";
 import { referenceTools } from "./tools/reference.js";
@@ -45,7 +45,9 @@ const allTools = [
 ];
 
 // The knowledge-version tool IS the metadata -- don't self-annotate it.
-const FOOTER_EXEMPT = new Set(["electron_knowledge_version"]);
+// Keyed off the tool's own exported name so a rename can't silently
+// re-enable the footer on the one tool that must opt out.
+const FOOTER_EXEMPT = new Set([KNOWLEDGE_VERSION_TOOL_NAME]);
 
 const server = new McpServer({
   name: "@yawlabs/electron-mcp",
@@ -88,4 +90,13 @@ for (const tool of allTools) {
 }
 
 const transport = new StdioServerTransport();
-await server.connect(transport);
+try {
+  await server.connect(transport);
+} catch (err) {
+  // The only startup path that can fail opaquely. Surface a one-line
+  // diagnostic and exit non-zero instead of dumping an unhandled-rejection
+  // stack trace, matching the unknown-subcommand guard above.
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`Failed to start electron-mcp server: ${message}`);
+  process.exit(1);
+}
