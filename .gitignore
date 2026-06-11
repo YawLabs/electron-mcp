@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 *.tgz
 .env
+bin/
+build-tmp/
+dist-release/

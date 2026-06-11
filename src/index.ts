@@ -90,13 +90,12 @@ for (const tool of allTools) {
 }
 
 const transport = new StdioServerTransport();
-try {
-  await server.connect(transport);
-} catch (err) {
-  // The only startup path that can fail opaquely. Surface a one-line
-  // diagnostic and exit non-zero instead of dumping an unhandled-rejection
-  // stack trace, matching the unknown-subcommand guard above.
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`Failed to start electron-mcp server: ${message}`);
+// Non-top-level-await form: the binary is bundled to CJS via esbuild, which
+// cannot emit top-level await. `.catch()` preserves the prior try/catch
+// behavior -- surface a one-line diagnostic and exit non-zero instead of
+// dumping an unhandled-rejection stack trace, matching the unknown-subcommand
+// guard above.
+server.connect(transport).catch((err: unknown) => {
+  process.stderr.write(`electron-mcp: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
-}
+});
