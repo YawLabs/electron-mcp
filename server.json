@@ -2,12 +2,12 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.YawLabs/electron-mcp",
   "description": "Electron.js MCP server — IPC scaffolding, security auditing, build tooling for AI assistants",
-  "version": "1.2.14",
+  "version": "1.2.15",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@yawlabs/electron-mcp",
-      "version": "1.2.14",
+      "version": "1.2.15",
       "transport": {
         "type": "stdio"
       }
