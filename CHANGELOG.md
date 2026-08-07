@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-08-07
+
 ### Added
 - Runtime launcher at `bin/electron-mcp.mjs`: the published `electron-mcp` command now prefers the [oam](https://oamjs.org) runtime and falls back to Node. `ELECTRON_MCP_RUNTIME` selects (`auto` / `oam` / `node`) and `OAM_BIN` overrides discovery. Both paths verified against the MCP surface — handshake plus all 18 tools — and behave identically. The fallback does **not** re-exec Node: npm has already started Node to run the launcher, so it is an in-process `import()` with no extra spawn.
 
