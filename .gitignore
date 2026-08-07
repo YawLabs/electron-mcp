@@ -3,6 +3,7 @@ dist/
 *.tsbuildinfo
 *.tgz
 .env
-bin/
+bin/*
+!bin/electron-mcp.mjs
 build-tmp/
 dist-release/
