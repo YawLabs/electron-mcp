@@ -209,7 +209,7 @@ Call `electron_knowledge_version` to get the metadata directly. When a new Elect
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20.11+
 - No runtime dependencies
 
 ## Contributing
