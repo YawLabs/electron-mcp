@@ -3,6 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@yawlabs/electron-mcp)](https://www.npmjs.com/package/@yawlabs/electron-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/YawLabs/electron-mcp)](https://github.com/YawLabs/electron-mcp/stargazers)
+[![Follow @TokenLimitNews on X](https://img.shields.io/badge/follow-%40TokenLimitNews-000000?logo=x&logoColor=white)](https://x.com/TokenLimitNews)
 
 **Make your AI assistant actually good at Electron.** 18 tools for the stuff AI models hallucinate about: context isolation, preload bridges, fuses, CSP, signing, auto-updates, breaking changes between majors, and the 20 official security recommendations.
 
