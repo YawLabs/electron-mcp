@@ -116,7 +116,7 @@ Use the same JSON block shown above in any of these.
 - **electron_check_deprecated_apis** — Scan source for APIs deprecated or removed in the target Electron version.
 
 ### Performance (1)
-- **electron_audit_performance** — Detect the 8 official Electron performance anti-patterns (sync I/O on main, unbounded event listeners, etc).
+- **electron_audit_performance** — Detect the 7 official Electron performance anti-patterns (sync I/O on main, eager loading of heavy modules, etc).
 
 ### Reference (2)
 - **electron_explain_concept** — Authoritative explainer for 8 topics: process model, context isolation, sandbox, IPC, ASAR, fuses, code signing, build tools.
