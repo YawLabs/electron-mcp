@@ -2,27 +2,39 @@
   "name": "@yawlabs/electron-mcp",
   "version": "1.4.1",
   "mcpName": "io.github.YawLabs/electron-mcp",
-  "description": "Electron.js MCP server — IPC scaffolding, security auditing, build tooling, and development intelligence for AI assistants",
+  "description": "Electron MCP server: IPC scaffolding, security audits, CSP and fuses config, build-error diagnosis, and version-migration checklists",
   "license": "MIT",
   "author": "YawLabs <contact@yaw.sh>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/YawLabs/electron-mcp.git"
   },
-  "homepage": "https://github.com/YawLabs/electron-mcp#readme",
+  "homepage": "https://yaw.sh/mcp-servers/electron-mcp/",
   "bugs": {
     "url": "https://github.com/YawLabs/electron-mcp/issues"
   },
   "keywords": [
     "electron",
     "electronjs",
+    "electron-mcp",
     "mcp",
+    "mcp-server",
     "model-context-protocol",
-    "ai",
     "ipc",
+    "context-isolation",
+    "preload",
+    "contextbridge",
+    "csp",
+    "content-security-policy",
+    "fuses",
+    "electron-builder",
+    "code-signing",
+    "auto-update",
     "security",
     "desktop",
-    "development"
+    "claude-code",
+    "cursor",
+    "ai"
   ],
   "type": "module",
   "main": "dist/index.js",
