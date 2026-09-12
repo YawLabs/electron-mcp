@@ -46,7 +46,7 @@ No `nodeIntegration`. No raw `ipcRenderer` exposed. Correct on the first try.
 - **Security** (4) -- audit against 19 of the 20 items in [the official security checklist](https://www.electronjs.org/docs/latest/tutorial/security) (the 20th, session permissions, needs runtime context), generate `@electron/fuses` config, generate a bundler/framework-aware CSP, lint for dangerous patterns
 - **Build** (4) -- diagnose electron-builder/forge errors (code signing, native module rebuilds, ASAR, entitlements, path quoting), generate `electron-updater` setup, generate cross-platform deep linking, scaffold a full project
 - **Migration** (2) -- migration checklist v28 to v41 with breaking changes per major, scan source for deprecated/removed APIs
-- **Performance** (1) -- detect the 8 official performance anti-patterns
+- **Performance** (1) -- detect the 7 official performance anti-patterns
 - **Reference** (2) -- version-aware concept explainer + knowledge-vintage metadata
 
 **What it's not:** regex-based static analysis, not a TypeScript parser. The audit/lint tools catch common patterns; they won't catch a CSP constructed across three files. Embedded Electron knowledge was last verified 2026-04-13 against v41 stable; every response footer declares that date.

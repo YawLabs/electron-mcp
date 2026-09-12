@@ -10,7 +10,7 @@ The single source of truth for the vintage is `src/knowledge.ts`. Every tool res
 | --- | --- | --- |
 | `src/tools/migration.ts` | Breaking changes per major, deprecated API table, platform support drops | Each Electron major |
 | `src/tools/security.ts` | 20 official security recommendations with default-behavior cutoffs | Any security-checklist change |
-| `src/tools/performance.ts` | 8 performance anti-patterns with fixes | Any performance-guide change |
+| `src/tools/performance.ts` | 7 performance anti-patterns with fixes | Any performance-guide change |
 | `src/tools/ipc.ts` (`explain_process_model`) | Process-model explanation with version-specific notes | Process-model changes (rare) |
 | `src/tools/reference.ts` (`explain_concept`) | 8 concept explanations | Concept-level API changes |
 | `src/tools/build.ts` (`diagnose_build_error`) | Error-pattern → cause → fix map for electron-builder / forge / packager | Build-tool behavior changes |
