@@ -4,6 +4,16 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **The launcher always uses the newest oam, and the minimum is now the latest release, 0.15.2.** It used to take the FIRST oam binary it found and only then check its version, so a stale copy in an earlier location hid a current one: with oam 0.9.0 in `~/.oam/bin` and 0.15.2 on `PATH`, it ran 0.9.0. Every oam binary it can see is now asked for its version, and the newest at or above 0.15.2 wins; on a tie the installed copy keeps priority.
+- **An oam host older than the floor no longer serves the server itself.** When a client ran `oam run bin/electron-mcp.mjs` with an old oam and discovery found nothing usable, the server ran on that old oam. When a newer oam WAS found, the handoff inherited stdio, which an oam older than 0.9.0 does not honor, so the MCP handshake never answered. An old host now hands off with piped stdio to the newest usable oam, or to Node on `PATH`, or exits with an error when there is neither.
+- **A bad `OAM_BIN` no longer ends the search for oam.** A path that does not exist (previously a silent fall back to Node), an oam below the floor, or a binary that will not run is named on stderr, and discovery carries on instead of dropping straight to Node.
+- **`ELECTRON_MCP_RUNTIME=node` now always means Node.** Launched under `oam run`, it hands off to Node on `PATH` rather than staying on oam.
+- Each `oam --version` probe is bounded at 5s, so a wedged binary on `PATH` cannot hang the launch.
+- The launcher header no longer claims this server shells out to a CLI or needs broad sandbox grants; its `src/` has no process spawn, project-directory read, or network client. No behavior change: oam is still run with no `--permission` flags.
+
 ## [1.4.3] — 2026-09-12
 
 ### Fixed
