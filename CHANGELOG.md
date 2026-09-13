@@ -4,7 +4,7 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.3] — 2026-09-12
 
 ### Fixed
 - **The launcher no longer spawns a nested oam when it is already running on oam.** A host that resolves this package's `bin` and launches `oam run bin/electron-mcp.mjs` — Yaw MCP does, and so does oam's sidecar regression matrix — got a second runtime underneath the first, because the launcher discovered and spawned oam without asking what it was already hosted on: measured on Windows as `oam.exe` -> a nested `oam.exe` + `conhost.exe`, two runtime boots for one server. When `process.versions.oam` clears the same 0.9.0 floor a discovered binary must, the server is now imported into the host process, exactly as the Node fallback is — no discovery, no `oam --version` probe, and `OAM_BIN` is not consulted, since the host has already chosen which oam runs. A host oam below the floor keeps the discovery path unchanged. Nothing is lost by staying in the host: this launcher wires up no `--permission` sandbox, so there is no flag a fresh oam could apply. `ELECTRON_MCP_RUNTIME=oam` is satisfied by the host oam. The decision is a pure `runtimePlan()` covered by unit tests, and the wiring by running the real bin under a preloaded `process.versions.oam`.
