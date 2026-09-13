@@ -299,9 +299,9 @@ describe("launcher with no usable oam", () => {
     // The chosen binary passed its --version probe and then could not be
     // spawned (deleted or replaced in between). A failed spawn emits 'error'
     // and then 'close' with the negative errno, and on an oam host the launcher
-    // waits for 'close' -- so an unguarded close handler exited the launcher
-    // mid-fallback and nothing served. The preload makes the FIRST spawn target
-    // a path that does not exist; the Node fallback spawns normally.
+    // waits for 'close' -- so an unguarded close handler would exit the launcher
+    // mid-fallback and nothing would serve. The preload makes the FIRST spawn
+    // target a path that does not exist; the Node fallback spawns normally.
     const failFirstSpawn = [
       'import childProcess from "node:child_process";',
       'import { syncBuiltinESMExports } from "node:module";',
@@ -318,5 +318,9 @@ describe("launcher with no usable oam", () => {
     assert.equal(run.code, 0, JSON.stringify(run));
     assert.equal(run.stdout.trim(), PACKAGE_VERSION, "the Node fallback must still serve");
     assert.match(run.stderr, /failed to launch oam at .*using Node instead/);
+    // A newer oam WAS found; it would not start. The handoff note must say
+    // that, not that none was found.
+    assert.match(run.stderr, /this process is oam 0\.9\.0, older than 0\.15\.2, and the newer oam would not start;/);
+    assert.doesNotMatch(run.stderr, /no newer oam was found/);
   });
 });

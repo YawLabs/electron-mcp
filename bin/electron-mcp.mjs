@@ -63,10 +63,10 @@
  * NO SANDBOX HERE
  * oam is run with no `--permission` flags. The rationale this header used to
  * give -- spawning app binaries, reading project directories, talking to a
- * DevTools endpoint -- is text shared with the other launchers in the fleet
- * and describes more than this server does: its tools take code and config as
- * string input and return generated code or findings, with no process spawn,
- * project-directory read, or network client anywhere in `src/`.
+ * DevTools endpoint -- described more than this server does: its tools take
+ * code and config as string input and return generated code or findings, with
+ * no process spawn, project-directory read, or network client anywhere in
+ * `src/`.
  *
  * MINIMUM OAM VERSION
  * The latest oam release, 0.15.2 -- bump OAM_MIN when oam ships a newer one.
@@ -396,9 +396,11 @@ async function launchChild(cmd, args, onLaunchFailed) {
   // Everything that assumes a live child waits for 'spawn'. A failed spawn
   // still emits 'close' (after 'error', with the negative errno as its code), so
   // an unguarded close handler would process.exit() out from under the fallback
-  // onLaunchFailed has just started -- and stdin piped into a child that never
-  // ran would swallow the host's first bytes before the fallback could read
-  // them. Until 'spawn', process.stdin has no reader and simply stays paused.
+  // onLaunchFailed has just started. Stdin piped into a child that never ran
+  // stalls the fallback's input as well: measured on a posed oam 0.9.0 host,
+  // the Node handoff answered the host's first request and never read the
+  // next one. Until 'spawn', process.stdin has no reader and simply stays
+  // paused.
   let spawned = false;
   child.on("spawn", () => {
     spawned = true;
@@ -499,13 +501,17 @@ async function handOffToNode(reason) {
   });
 }
 
-/** No usable oam, under a mode that allows Node. */
-async function fallBackToNode(hostOam) {
+/**
+ * No usable oam, or the chosen one would not start, under a mode that allows
+ * Node. `why` finishes the below-floor handoff note, so it can say which of
+ * the two happened.
+ */
+async function fallBackToNode(hostOam, why) {
   if (hostOam === undefined) {
     await runInProcess();
     return;
   }
-  await handOffToNode(`this process is oam ${hostOam}, older than ${OAM_MIN.join(".")}, and no newer oam was found`);
+  await handOffToNode(`this process is oam ${hostOam}, older than ${OAM_MIN.join(".")}, and ${why}`);
 }
 
 const mode = (process.env.ELECTRON_MCP_RUNTIME ?? "auto").toLowerCase();
@@ -534,7 +540,7 @@ if (plan === "in-process") {
       await errSync(
         `electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err}); using Node instead.\n`,
       );
-      await fallBackToNode(hostOam);
+      await fallBackToNode(hostOam, "the newer oam would not start");
     });
   } else {
     const shim = findOamShim();
@@ -558,6 +564,6 @@ if (plan === "in-process") {
     // auto: falling back is correct, but silence is how someone never learns
     // their OAM_BIN is wrong or their oam is too old to use.
     if (notes.length > 0) await errSync(`electron-mcp: ${notes.join("; ")}; using Node instead.\n`);
-    await fallBackToNode(hostOam).catch(fallbackFailed);
+    await fallBackToNode(hostOam, "no newer oam was found").catch(fallbackFailed);
   }
 }
