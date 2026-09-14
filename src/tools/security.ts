@@ -4,6 +4,7 @@ import {
   exposesRawIpcRenderer,
   stripComments,
   stripCommentsAndStrings,
+  stripHtmlComments,
   unsafeOpenExternalCallSites,
 } from "../static-analysis.js";
 
@@ -63,11 +64,13 @@ export const securityTools = [
       // and inline notes don't trigger false positives. For HTML we strip only
       // HTML comments (<!-- ... -->) -- the CSP / <webview> checks still need
       // the real markup, but a Content-Security-Policy / http:// / <webview>
-      // mention inside an HTML comment should not count.
+      // mention inside an HTML comment should not count. stripHtmlComments
+      // reads them as a browser does, so nothing a browser would render is
+      // hidden from the audit.
       const mainCode = input.mainCode ? stripComments(input.mainCode) : "";
       const pkgJson = input.packageJson || "";
       const preload = input.preloadCode ? stripComments(input.preloadCode) : "";
-      const html = (input.htmlContent || "").replace(/<!--[\s\S]*?-->/g, "");
+      const html = stripHtmlComments(input.htmlContent || "");
 
       // Default assumes latest supported stable; overridden by explicit input
       // or extracted from package.json. Guard against NaN from malformed input.

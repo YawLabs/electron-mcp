@@ -203,6 +203,66 @@ function readFirstArg(code: string, start: number): string {
 }
 
 /**
+ * Remove HTML comments the way a browser reads them, so a CSP meta tag, an
+ * `http://` URL or a `<webview>` mentioned inside a comment does not count
+ * as markup, while everything a browser would actually render is kept.
+ *
+ * A single left-to-right scan, not a regex replace: a comment opens at `<!--`
+ * and closes at the FIRST `-->` (or `--!>`, which browsers also accept) after
+ * it; `<!-->` and `<!--->` are complete empty comments; an unterminated
+ * comment runs to the end of the input. The text outside comments is copied
+ * through untouched, character for character -- which is what the HTML
+ * parser renders, so the audit sees exactly what a browser would show.
+ *
+ * The output is consumed ONCE, as rendered text, and may itself contain
+ * `<!--` (`<!-<!---->- x -->` renders as `<!-- x -->`, literally); that is
+ * not a comment to re-strip, any more than it is one to a browser. This is
+ * the ambiguity CodeQL's incomplete-multi-character-sanitization rule warns
+ * about for a `replace(/<!--.*?-->/g)` loop: the fix is to read the input
+ * the way its consumer does, in one pass, not to strip until nothing changes
+ * (which would hide rendered text from the audit).
+ */
+export function stripHtmlComments(html: string): string {
+  let out = "";
+  let i = 0;
+  const n = html.length;
+  while (i < n) {
+    const open = html.indexOf("<!--", i);
+    if (open === -1) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, open);
+    const from = open + 4;
+    // `<!-->` and `<!--->` are complete (empty) comments: the parser lets the
+    // opener's own dashes serve as the closer.
+    if (html.startsWith(">", from)) {
+      i = from + 1;
+      continue;
+    }
+    if (html.startsWith("->", from)) {
+      i = from + 2;
+      continue;
+    }
+    // Otherwise the earliest `-->` or `--!>` after the opener closes it.
+    const closeA = html.indexOf("-->", from);
+    const closeB = html.indexOf("--!>", from);
+    let close = -1;
+    let len = 0;
+    if (closeA !== -1 && (closeB === -1 || closeA <= closeB)) {
+      close = closeA;
+      len = 3;
+    } else if (closeB !== -1) {
+      close = closeB;
+      len = 4;
+    }
+    if (close === -1) break; // unterminated: the rest of the input is comment
+    i = close + len;
+  }
+  return out;
+}
+
+/**
  * Return the first argument of every `shell.openExternal(arg)` call that is
  * NOT a hardcoded safe https string literal.
  *
