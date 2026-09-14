@@ -29,7 +29,7 @@ Other Electron MCP servers give your model a shell and hope. This one doesn't.
 
 ## Quick start
 
-No API keys. No environment variables. Just install it.
+No API keys. No environment variables required. Just install it.
 
 **1. Create `.mcp.json` in your project root**
 
@@ -88,6 +88,37 @@ That's it. Now ask your AI assistant:
 | VS Code | `.vscode/mcp.json` |
 
 Use the same JSON block shown above in any of these.
+
+## Runtime and sandbox
+
+The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.15.2 or newer) is installed, and falls back to the Node that is already running it. Nothing to configure; both serve the same server.
+
+**Opt-in sandbox.** With oam, the server can run under `--permission` with no grants at all: no filesystem, no child processes, no network, no environment. This server needs none of them (every tool computes over its arguments and returns markdown), so the sandbox costs nothing and turns any capability the server merely happens not to use into a runtime refusal. Set `ELECTRON_MCP_SANDBOX=1` in the server's `env`:
+
+```json
+{
+  "mcpServers": {
+    "electron": {
+      "command": "npx",
+      "args": ["-y", "@yawlabs/electron-mcp@latest"],
+      "env": { "ELECTRON_MCP_SANDBOX": "1" }
+    }
+  }
+}
+```
+
+It is off by default because it is a behaviour change: a future version that legitimately needs a capability should fail in review, not in your session. Two things to know:
+
+- The sandbox needs a fresh oam to apply it. If no usable oam is found, or the one found fails to start, the default `ELECTRON_MCP_RUNTIME=auto` still serves, **without** `--permission`, and says so on stderr. Add `ELECTRON_MCP_RUNTIME=oam` to make that fatal instead.
+- Under `ELECTRON_MCP_RUNTIME=node` there is no oam, so the sandbox is not applied; the launcher notes that on stderr too.
+
+| Variable | Effect |
+|---|---|
+| `ELECTRON_MCP_RUNTIME=auto` | newest usable oam, else Node (default) |
+| `ELECTRON_MCP_RUNTIME=oam` | newest usable oam, else exit with an error |
+| `ELECTRON_MCP_RUNTIME=node` | always Node |
+| `ELECTRON_MCP_SANDBOX=1` | run oam under `--permission` with no grants |
+| `OAM_BIN=/path/to/oam` | use this oam when it is usable, before discovery |
 
 ## Tools (18)
 

@@ -44,9 +44,13 @@ This MCP does NOT wrap a REST API. It is a development intelligence server:
 - All tools return markdown-formatted strings (not JSON)
 - Version injected at build time via esbuild `define`
 
+## Launcher
+
+`bin/electron-mcp.mjs` is the npm `bin`. It prefers the newest usable oam runtime (floor `OAM_MIN`, the latest oam release) and falls back to Node in-process. Environment variables: `ELECTRON_MCP_RUNTIME` (`auto` | `oam` | `node`), `ELECTRON_MCP_SANDBOX=1` (spawn oam under bare `--permission`; opt-in, and never dropped silently: every path that serves without it says so on stderr), `OAM_BIN`. The header comment in the launcher is the design record; `src/launcher.test.ts` tests the pure decision functions by extracting their source, and the wiring by running the real bin under a preloaded `process.versions.oam`.
+
 ## Release process
 
-Run `./release.sh <version>` or trigger from CI with a version tag.
+Run `./release.sh <version>` from the workstation. There is no GitHub Actions workflow in this repo (Actions is disabled; `.github/` holds only `CODEOWNERS`), so the script is the whole release path: lint, build + test, bump `package.json` / `server.json`, promote `CHANGELOG.md`'s `[Unreleased]` heading, commit + tag + push, `npm publish`, GitHub release, MCP Registry publish, then an `npx` smoke test of the published tarball. Each step is idempotent; re-run with the same version to resume. Document changes under `## [Unreleased]` in `CHANGELOG.md` before releasing, or the release notes fall back to commit subjects.
 
 ## Dependency overrides
 

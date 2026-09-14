@@ -4,6 +4,14 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Opt-in oam sandbox: `ELECTRON_MCP_SANDBOX=1`.** The launcher spawns oam under `--permission` with no grants at all, so filesystem, child-process, network and environment access are all refused at runtime. This server needs none of them (verified against oam 0.15.2: `--version`, `initialize`, `tools/list` and a call of every tool answer exactly as they do on Node, while a one-line `readFileSync` under the same flag is refused with `ERR_ACCESS_DENIED`), so the sandbox costs nothing and turns any capability the server merely happens not to use into a refusal. Off by default, because `--permission` is a behaviour change. When the sandbox is requested but cannot be applied, the launcher says so on stderr rather than downgrading silently: a host already running on oam always spawns a fresh one (only a fresh oam can apply a process-level flag); if no usable oam is found or the spawn fails, `ELECTRON_MCP_RUNTIME=auto` serves without `--permission` and names `ELECTRON_MCP_RUNTIME=oam` as the way to make that fatal; under `ELECTRON_MCP_RUNTIME=node` it notes that Node has no oam sandbox. README gains a "Runtime and sandbox" section covering the launcher's environment variables. (#25)
+
+### Changed
+- When `ELECTRON_MCP_RUNTIME=node` is set on an oam host and no Node is on `PATH`, the error now says to put Node on `PATH` instead of suggesting `oam self-update`, which would not help.
+
 ## [1.5.1] — 2026-09-13
 
 ### Changed
