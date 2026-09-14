@@ -9,6 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 - npm and MCP Registry listing metadata: bugs URL, core keywords, and server.json title/repository/websiteUrl
 
+### Fixed
+- **The launcher header's `NO SANDBOX HERE` rationale now describes this server.** `--permission` is simply not wired up; it is not that the server would need wide-open grants. The tools compute in-process over their arguments and return markdown. Outside its test files, `src/` spawns no process, opens no socket, makes no network request, and reads no caller-supplied path; the one filesystem touch is its own `package.json`, on the tsc-only path the esbuild bundle never takes. The oam floor now carries the same reason as the other `@yawlabs/*-mcp` launchers. Comments only, no behavior change. (#16)
+
+## [1.5.0] — 2026-09-13
+
+### Changed
+- `release.sh` waits for npm to serve the new version before publishing to the MCP Registry, whose validator reads the package from npm. A fresh release no longer fails that step with `version ... was not found (status: 404)` and needs a re-run. `SKIP_NPM_WAIT=1` bypasses the wait; `NPM_WAIT_TIMEOUT_S` retunes its 300s cap. Release tooling only; the published package is unchanged.
+- README: the X follow badge moved to the bottom.
+
 ## [1.4.4] — 2026-09-13
 
 ### Fixed
