@@ -9,12 +9,12 @@
     "id": "1207491019"
   },
   "websiteUrl": "https://yaw.sh/mcp-servers/electron-mcp/",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@yawlabs/electron-mcp",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "transport": {
         "type": "stdio"
       }

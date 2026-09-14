@@ -1,6 +1,6 @@
 {
   "name": "@yawlabs/electron-mcp",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "mcpName": "io.github.YawLabs/electron-mcp",
   "description": "Electron MCP server: IPC scaffolding, security audits, CSP and fuses config, build-error diagnosis, and version-migration checklists",
   "license": "MIT",
