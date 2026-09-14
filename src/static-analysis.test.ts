@@ -5,8 +5,53 @@ import {
   hasUnsafeOpenExternal,
   stripComments,
   stripCommentsAndStrings,
+  stripHtmlComments,
   unsafeOpenExternalCallSites,
 } from "./static-analysis.js";
+
+describe("stripHtmlComments", () => {
+  it("removes a comment and keeps the markup around it byte for byte", () => {
+    const html = `<head><!-- old: <meta http-equiv="Content-Security-Policy"> --><meta charset="utf-8"></head>`;
+    assert.strictEqual(stripHtmlComments(html), `<head><meta charset="utf-8"></head>`);
+  });
+
+  it("removes comments spanning lines and several comments in one document", () => {
+    const html = "a<!--\n one\n-->b<!-- two -->c";
+    assert.strictEqual(stripHtmlComments(html), "abc");
+  });
+
+  it("closes a comment at the FIRST closer, as a browser does", () => {
+    // Everything after the first `-->` is rendered text and stays visible to
+    // the audit, even if it looks like more comment.
+    assert.strictEqual(stripHtmlComments("<!-- a --> <webview src='x'> -->"), " <webview src='x'> -->");
+  });
+
+  it("reads nested-looking openers the way a browser does: rendered text stays visible to the audit", () => {
+    // `<!-<!---->- secret -->`: the parser sees text `<!-`, an EMPTY comment
+    // `<!---->`, then text `- secret -->`. What a browser renders is the
+    // literal `<!-- secret -->`, and that is what the audit must see -- a
+    // strip-until-stable loop would take a second bite and hide `secret`.
+    const rendered = stripHtmlComments("<!-<!---->- secret -->");
+    assert.strictEqual(rendered, "<!-- secret -->");
+    assert.ok(rendered.includes("secret"), "rendered text must not be hidden from the audit");
+  });
+
+  it("accepts --!> as a closer and treats <!--> and <!---> as complete empty comments", () => {
+    assert.strictEqual(stripHtmlComments("a<!-- x --!>b"), "ab");
+    assert.strictEqual(stripHtmlComments("a<!-->b"), "ab");
+    assert.strictEqual(stripHtmlComments("a<!--->b"), "ab");
+  });
+
+  it("treats an unterminated comment as running to the end of the input", () => {
+    assert.strictEqual(stripHtmlComments("kept<!-- never closed <webview>"), "kept");
+  });
+
+  it("passes input with no comments through unchanged", () => {
+    const html = `<meta http-equiv="Content-Security-Policy" content="default-src 'self'">`;
+    assert.strictEqual(stripHtmlComments(html), html);
+    assert.strictEqual(stripHtmlComments(""), "");
+  });
+});
 
 describe("stripComments", () => {
   it("removes line comments while preserving code on the same line", () => {

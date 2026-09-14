@@ -110,11 +110,24 @@ const scoopManifest = {
 };
 
 // 3. Homebrew formula (CLI -> formula, NOT cask).
-const licenseLine = proprietary ? 'license :cannot_represent' : `license "${pkg.license}"`;
+//
+// Every value that lands inside a Ruby double-quoted string goes through
+// rubyString. Escaping only the quote (the previous `replace(/"/g, '\\"')`)
+// was incomplete in two ways a package.json field can hit: a backslash in
+// the description would escape the character after it, and `#{`, `#$` or
+// `#@` would be INTERPOLATED by Ruby -- a description mentioning "#{version}"
+// is a code injection into the formula, not a string. Backslash first, so
+// the escapes added for the quote and the hash are not themselves escaped.
+const rubyString = (value) =>
+  `"${String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/#(?=[{$@])/g, '\\#')}"`;
+const licenseLine = proprietary ? 'license :cannot_represent' : `license ${rubyString(pkg.license)}`;
 const formula = `class ${className} < Formula
-  desc "${(pkg.description ?? '').replace(/"/g, '\\"')}"
-  homepage "${homepage}"
-  version "${version}"
+  desc ${rubyString(pkg.description)}
+  homepage ${rubyString(homepage)}
+  version ${rubyString(version)}
   ${licenseLine}
 
   on_macos do
