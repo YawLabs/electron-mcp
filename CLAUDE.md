@@ -50,7 +50,7 @@ This MCP does NOT wrap a REST API. It is a development intelligence server:
 
 ## Release process
 
-Run `./release.sh <version>` from the workstation. There is no GitHub Actions workflow in this repo (Actions is disabled; `.github/` holds only `CODEOWNERS`), so the script is the whole release path: lint, build + test (including a check that the real-oam sandbox differential ran rather than skipped -- the workstation needs an oam at `OAM_MIN`), bump `package.json` / `server.json`, promote `CHANGELOG.md`'s `[Unreleased]` heading, commit + tag + push, `npm publish`, GitHub release, MCP Registry publish, then an `npx` smoke test of the published tarball. Each step is idempotent; re-run with the same version to resume. Document changes under `## [Unreleased]` in `CHANGELOG.md` before releasing, or the release notes fall back to commit subjects.
+Run `./release.sh <version>` from the workstation. There is no GitHub Actions workflow in this repo (Actions is disabled; `.github/` holds only `CODEOWNERS`), so the script is the whole release path: lint, build + test (including a check that the real-oam sandbox differential ran rather than skipped -- the workstation needs an oam at `OAM_MIN`), bump `package.json` / `server.json`, promote `CHANGELOG.md`'s `[Unreleased]` heading, commit + tag + push, `npm publish`, GitHub release, MCP Registry publish, then an `npx` smoke test of the published tarball. Each step is idempotent; re-run with the same version to resume. Document changes under `## [Unreleased]` in `CHANGELOG.md` before releasing; the script promotes that section into the version's entry and takes the GitHub release notes from it, and when `[Unreleased]` is empty it generates the entry from commit subjects instead.
 
 ## Dependency overrides
 
