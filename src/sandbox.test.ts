@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -20,14 +21,17 @@ import { fileURLToPath } from "node:url";
  *
  * A real oam cannot be assumed on every box the suite runs on, so the whole
  * file skips -- loudly, naming why -- when no oam at or above the launcher's
- * floor is reachable through OAM_BIN or PATH. release.sh runs `npm test` on a
- * workstation that has one, so every release is verified this way.
+ * floor is reachable through OAM_BIN, the installed locations the launcher
+ * checks, or PATH. release.sh refuses to release on a skip, so every release
+ * is verified this way.
  *
- * Arguments are synthesized from each tool's inputSchema (the first enum
- * value, a snippet of Electron code for code-shaped strings, and so on). They
- * do not have to be MEANINGFUL: a tool that rejects them does so identically
- * on both runtimes, and the differential is the assertion. What matters is
- * that every tool's handler actually executes.
+ * Arguments are synthesized from each tool's inputSchema (every property,
+ * with the first enum value, a snippet of Electron code for code-shaped
+ * strings, and so on). They do not have to be MEANINGFUL, but they do have to
+ * get every handler past argument validation and to a normal result on Node:
+ * a tool the SDK rejects before dispatch never executes on either runtime,
+ * and a differential over two identical rejections proves nothing. So the
+ * Node run is required to be all `ok` first, and only then compared.
  */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const LAUNCHER = resolve(repoRoot, "bin", "electron-mcp.mjs");
@@ -54,12 +58,22 @@ function atLeast(v: number[] | null, min: number[]): boolean {
   return true;
 }
 
-/** An oam binary at or above the floor: OAM_BIN first, then PATH. Null if none. */
+/**
+ * An oam binary at or above the floor: OAM_BIN, then the installed locations
+ * the launcher's discoverOamPaths checks (%LOCALAPPDATA%\oam\bin on Windows,
+ * ~/.oam/bin), then PATH. Null if none. Every candidate is probed, so an old
+ * oam early in the order cannot hide a current one later.
+ */
 function findUsableOam(): { path: string; version: number[] } | null {
   const floor = launcherFloor();
   const exe = process.platform === "win32" ? "oam.exe" : "oam";
+  const installed = [join(homedir(), ".oam", "bin", exe)];
+  if (process.platform === "win32") {
+    installed.unshift(join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "oam", "bin", exe));
+  }
   const candidates = [
     ...(process.env.OAM_BIN ? [process.env.OAM_BIN] : []),
+    ...installed,
     ...(process.env.PATH ?? "")
       .split(delimiter)
       .filter(Boolean)
@@ -102,7 +116,13 @@ const SAMPLE_CODE = [
   'win.loadURL("http://example.com");',
 ].join("\n");
 
-/** A schema-valid value for a required field, by shape and by name. */
+/**
+ * A schema-valid value for a field, by shape and by name. Every property is
+ * filled, not just the required ones, so optional inputs (a preload, an HTML
+ * file, a package.json) reach their code paths too. Names are chosen to pass
+ * the tools' own validators: channels are `scope:action`, identifiers and
+ * package names are plain, a target version is above the current one.
+ */
 function sampleFor(schema: JsonSchema | undefined, name: string): unknown {
   if (!schema) return undefined;
   if (schema.enum) return schema.enum[0];
@@ -111,19 +131,20 @@ function sampleFor(schema: JsonSchema | undefined, name: string): unknown {
     case "string":
       if (/code|content|html|json|output|error/i.test(name)) return SAMPLE_CODE;
       if (/version/i.test(name)) return "38";
-      if (/name|channel|id/i.test(name)) return "app:get-data";
+      if (/channel/i.test(name)) return "app:get-data";
+      if (/name|id/i.test(name)) return "sample_app";
       if (/url|scheme|host/i.test(name)) return "myapp";
       return "sample";
     case "number":
     case "integer":
-      return schema.minimum ?? 30;
+      return (schema.minimum ?? 30) + (/target/i.test(name) ? 1 : 0);
     case "boolean":
       return true;
     case "array":
       return [sampleFor(schema.items ?? { type: "string" }, name)];
     case "object": {
       const out: Record<string, unknown> = {};
-      for (const key of schema.required ?? []) out[key] = sampleFor(schema.properties?.[key], key);
+      for (const [key, sub] of Object.entries(schema.properties ?? {})) out[key] = sampleFor(sub, key);
       return out;
     }
     default:
@@ -133,10 +154,15 @@ function sampleFor(schema: JsonSchema | undefined, name: string): unknown {
 }
 
 type Tool = { name: string; inputSchema: JsonSchema };
-type RpcResponse = { id?: number; result?: { tools?: Tool[]; isError?: boolean }; error?: { message: string } };
+type Content = { type: string; text?: string };
+type RpcResponse = {
+  id?: number;
+  result?: { tools?: Tool[]; isError?: boolean; content?: Content[] };
+  error?: { message: string };
+};
 /** One tool's outcome, in the form the two runs are compared on. */
 type Outcome = "ok" | "isError" | `rpc-error: ${string}`;
-type Sweep = { tools: string[]; outcomes: Record<string, Outcome>; stderr: string };
+type Sweep = { tools: string[]; outcomes: Record<string, Outcome>; texts: Record<string, string>; stderr: string };
 
 /** Drive a server through initialize, tools/list and one call per tool. */
 function sweep(cmd: string, args: string[]): Promise<Sweep> {
@@ -196,16 +222,19 @@ function sweep(cmd: string, args: string[]): Promise<Sweep> {
       const list = await request("tools/list", {});
       const tools = list.result?.tools ?? [];
       const outcomes: Record<string, Outcome> = {};
+      const texts: Record<string, string> = {};
       for (const tool of tools) {
         const res = await request("tools/call", {
           name: tool.name,
           arguments: sampleFor(tool.inputSchema, tool.name) ?? {},
         });
         outcomes[tool.name] = res.error ? `rpc-error: ${res.error.message}` : res.result?.isError ? "isError" : "ok";
+        texts[tool.name] =
+          (res.result?.content ?? []).map((c) => c.text ?? "").join("\n") || (res.error?.message ?? "");
       }
       child.stdin.end();
       await new Promise((r) => child.on("close", r));
-      return { tools: tools.map((t) => t.name).sort(), outcomes, stderr };
+      return { tools: tools.map((t) => t.name).sort(), outcomes, texts, stderr };
     })().then(resolvePromise, (err) => {
       child.kill();
       reject(err);
@@ -218,7 +247,10 @@ const skip = !existsSync(DIST_BIN)
   ? "dist/index.js is not built"
   : oam
     ? false
-    : `no oam ${launcherFloor().join(".")} or newer on OAM_BIN or PATH -- install one from https://oamjs.org to run this`;
+    : `no oam ${launcherFloor().join(".")} or newer on OAM_BIN, in ~/.oam/bin, or on PATH -- install one from https://oamjs.org to run this`;
+
+/** What a denied capability looks like from inside a tool result. */
+const DENIAL = /ERR_ACCESS_DENIED|Access to this API has been restricted/;
 
 describe("server under oam --permission with no grants", () => {
   it("every tool answers exactly as it does on Node", { skip }, async () => {
@@ -229,11 +261,23 @@ describe("server under oam --permission with no grants", () => {
     const plain = await sweep(process.execPath, [DIST_BIN]);
 
     assert.ok(plain.tools.length >= 18, `expected the full tool set on Node, got ${plain.tools.length}`);
+    // The Node run must reach a normal result on EVERY tool: a handler the SDK
+    // rejects before dispatch never ran, and a differential over two identical
+    // rejections proves nothing about the sandbox. If a schema change makes a
+    // synthesized argument invalid, this fails here, by name, instead of
+    // silently shrinking the comparison.
+    const notOk = Object.entries(plain.outcomes).filter(([, o]) => o !== "ok");
+    assert.deepEqual(notOk, [], `every handler must run to a normal result on Node: ${JSON.stringify(notOk)}`);
     assert.deepEqual(sandboxed.tools, plain.tools, "the sandboxed server must list the same tools");
+    // The load-bearing assertion: tool for tool, the same outcome under the
+    // sandbox as on Node.
     assert.deepEqual(sandboxed.outcomes, plain.outcomes, "every tool must produce the same outcome under the sandbox");
-    assert.doesNotMatch(sandboxed.stderr, /ERR_ACCESS_DENIED/, `sandbox denial on stderr: ${sandboxed.stderr}`);
-    // Every handler executed, not merely listed: an outcome exists per tool.
-    assert.deepEqual(Object.keys(sandboxed.outcomes).sort(), plain.tools);
+    // A denial inside a handler is folded by the SDK into the RESULT (isError
+    // with the message in content), never stderr -- so look where it would be.
+    for (const [name, text] of Object.entries(sandboxed.texts)) {
+      assert.doesNotMatch(text, DENIAL, `sandbox denial inside ${name}'s result`);
+    }
+    assert.doesNotMatch(sandboxed.stderr, DENIAL, `sandbox denial on stderr: ${sandboxed.stderr}`);
   });
 
   it("control: the same oam refuses a filesystem read under the same flag", { skip }, () => {

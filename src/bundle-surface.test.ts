@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { stripCommentsAndStrings } from "./static-analysis.js";
+import ts from "typescript";
 
 /**
  * The shipped bundle's capability surface, pinned.
@@ -25,9 +25,12 @@ import { stripCommentsAndStrings } from "./static-analysis.js";
  * reads esbuild's metafile: that is the one place the bundle's REAL imports
  * are listed. A text scan cannot tell them apart from the `import ... from
  * "node:fs"` lines that live inside the Electron code the tools generate, as
- * text in template literals. The env scan below runs over
- * stripCommentsAndStrings(bundle) for the same reason: it removes every
- * string and template body and leaves only code this process would execute.
+ * text in template literals. The env scan below parses the bundle with the
+ * TypeScript compiler for the same reason: only a real parse separates a
+ * `process.env` read in code from the same characters inside a template
+ * literal or a regex. (The repo's own lexical scrubber cannot: a regex
+ * literal containing a quote flips its string/code state and blinds it to
+ * whole handlers.)
  */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -69,11 +72,37 @@ async function bundleServer(): Promise<Bundle> {
     define: { __VERSION__: JSON.stringify("0.0.0-test") },
   });
   const output = Object.values(result.metafile.outputs)[0];
-  const externals = output.imports
-    .filter((i) => i.external)
-    .map((i) => i.path)
-    .sort();
+  // One entry per importing module; two files importing node:process is not
+  // a capability change, so de-duplicate before pinning.
+  const externals = [...new Set(output.imports.filter((i) => i.external).map((i) => i.path))].sort();
   return { text: result.outputFiles[0].text, externals };
+}
+
+type AstCounts = { envReads: number; createRequireCalls: number };
+
+/** Walk the bundle's AST and count the two shapes the sandbox rationale rests on. */
+function countInAst(text: string): AstCounts {
+  const source = ts.createSourceFile("bundle.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const counts: AstCounts = { envReads: 0, createRequireCalls: 0 };
+  const isIdentifier = (node: ts.Node, name: string) => ts.isIdentifier(node) && node.text === name;
+  const visit = (node: ts.Node) => {
+    // process.env and process["env"], as a property access in executable code.
+    if (ts.isPropertyAccessExpression(node) && isIdentifier(node.expression, "process") && node.name.text === "env") {
+      counts.envReads++;
+    }
+    if (
+      ts.isElementAccessExpression(node) &&
+      isIdentifier(node.expression, "process") &&
+      ts.isStringLiteral(node.argumentExpression) &&
+      node.argumentExpression.text === "env"
+    ) {
+      counts.envReads++;
+    }
+    if (ts.isCallExpression(node) && isIdentifier(node.expression, "createRequire")) counts.createRequireCalls++;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return counts;
 }
 
 describe("shipped bundle capability surface", () => {
@@ -102,16 +131,30 @@ describe("shipped bundle capability surface", () => {
 
   it("reads no environment variable in executable code", async () => {
     // Generated Electron code mentions process.env inside template literals;
-    // stripping strings leaves only what this process itself would run.
+    // the AST walk sees only what this process itself would run.
     const { text } = await bundled;
-    const reads = [...stripCommentsAndStrings(text).matchAll(/process\.env\b/g)].length;
-    assert.equal(reads, 0, `found ${reads} process.env read(s) in executable bundle code`);
+    const { envReads } = countInAst(text);
+    assert.equal(envReads, 0, `found ${envReads} process.env read(s) in executable bundle code`);
   });
 
-  it("control: the raw bundle DOES mention process.env, so the scrub is what makes the check pass", async () => {
-    // Without this the previous test would also pass for a scanner that never
-    // saw the bundle at all.
+  it("calls createRequire exactly once, in the dead tsc-only version fallback", async () => {
+    // `node:module` is on the allow-list only for resolveVersionFromPackageJson,
+    // whose call site the bundle still carries behind the folded __VERSION__
+    // check. A second call would be a way to reach the filesystem with no new
+    // import statement for the pin above to see, so the count is pinned too.
+    const { text } = await bundled;
+    const { createRequireCalls } = countInAst(text);
+    assert.equal(createRequireCalls, 1, `expected exactly one createRequire() call, found ${createRequireCalls}`);
+  });
+
+  it("control: the raw bundle DOES mention process.env, so the parse is what makes the check pass", async () => {
+    // Without this the env test would also pass for a walker that never saw
+    // the bundle at all. And the walker must see through the same text: a
+    // template literal containing `process.env.X` counts zero, a real read one.
     const { text } = await bundled;
     assert.ok(/process\.env\b/.test(text), "expected generated-code mentions of process.env in the raw bundle");
+    assert.equal(countInAst("const s = `process.env.HOME`; const r = /['\"]x['\"]/;").envReads, 0);
+    assert.equal(countInAst("const r = /['\"]x['\"]/; const h = process.env.HOME;").envReads, 1);
+    assert.equal(countInAst('const h = process["env"].HOME;').envReads, 1);
   });
 });

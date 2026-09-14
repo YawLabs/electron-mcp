@@ -22,6 +22,7 @@ type PickNewest = (candidates: Candidate[]) => Candidate | null;
 type FallbackInProcess = (hostOam: string | undefined) => boolean;
 type SandboxSetting = "on" | "off" | "unrecognised";
 type ParseSandboxSetting = (value: string | undefined) => SandboxSetting;
+type ParseRuntimeSetting = (value: string | undefined) => { mode: "auto" | "oam" | "node"; recognised: boolean };
 
 /** Pull named declarations out of the launcher source, loudly. */
 function extract(patterns: RegExp[]): string {
@@ -183,6 +184,36 @@ describe("launcher parseSandboxSetting()", () => {
   });
 });
 
+describe("launcher parseRuntimeSetting()", () => {
+  const parse = new Function(
+    `${extract([/function parseRuntimeSetting\(value\) \{[\s\S]*?\n\}/])}\nreturn parseRuntimeSetting;`,
+  )() as ParseRuntimeSetting;
+
+  it("reads auto / oam / node case-insensitively and trimmed, and defaults to auto", () => {
+    // `"oam "` in a JSON env block used to fall through to auto in silence,
+    // which turned the fail-closed pairing (sandbox + RUNTIME=oam) into a
+    // fail-open one on a stray space.
+    for (const [value, mode] of [
+      [undefined, "auto"],
+      ["", "auto"],
+      ["  ", "auto"],
+      ["oam", "oam"],
+      ["OAM", "oam"],
+      [" oam ", "oam"],
+      ["Node", "node"],
+      ["auto\n", "auto"],
+    ] as const) {
+      assert.deepEqual(parse(value), { mode, recognised: true }, JSON.stringify(value));
+    }
+  });
+
+  it("reports anything else as unrecognised, reading it as auto", () => {
+    for (const value of ["oam.", "yes", "oam;node", "1", "nodejs"]) {
+      assert.deepEqual(parse(value), { mode: "auto", recognised: false }, JSON.stringify(value));
+    }
+  });
+});
+
 describe("launcher fallbackInProcess()", () => {
   const fallbackInProcess = loadFallbackInProcess();
 
@@ -311,6 +342,7 @@ const SERVE_AS_OAM = [
   "const realSpawn = childProcess.spawn;",
   "childProcess.spawn = function (cmd, args, opts) {",
   '  writeStderr(2, "SPAWN_ARGS=" + JSON.stringify(args) + "\\n");',
+  '  writeStderr(2, "SPAWN_STDIO=" + JSON.stringify(opts && opts.stdio) + "\\n");',
   '  const run = args.indexOf("run");',
   '  const dashdash = args.indexOf("--");',
   "  const nodeArgs = run === -1 ? args : [args[run + 1], ...args.slice(dashdash + 1)];",
@@ -318,6 +350,22 @@ const SERVE_AS_OAM = [
   "};",
   "syncBuiltinESMExports();",
 ].join("\n");
+
+/** The `stdio` option of the first spawn a SERVE_AS_OAM run reported, or null. */
+function recordedSpawnStdio(run: { stderr: string }): unknown {
+  const line = run.stderr.split("\n").find((l) => l.startsWith("SPAWN_STDIO="));
+  return line ? JSON.parse(line.slice("SPAWN_STDIO=".length)) : null;
+}
+
+/**
+ * The version string a host has to claim for the Node running this suite to
+ * pass as that host's own oam: hostOamCandidate probes `process.execPath
+ * --version` and accepts it only when it agrees with `process.versions.oam`.
+ * Posing "0.15.2" on a Node execPath is therefore NOT a candidate (Node says
+ * v22.x), which keeps every other test's "nothing to spawn" premise intact;
+ * posing Node's own version IS one.
+ */
+const NODE_AS_HOST_OAM = process.version.replace(/^v/, "");
 
 type ServeSession = { answered: number[]; stderr: string; exitedOnItsOwn: boolean; code: number | null };
 
@@ -457,6 +505,25 @@ function runLauncher(
 // boots one to three Node processes, and the suite-wide --test-timeout in
 // package.json already bounds a contended box.
 const skip = existsSync(DIST_BIN) ? false : "dist/index.js is not built";
+
+/**
+ * An environment with no oam anywhere: HOME and LOCALAPPDATA point at an
+ * empty directory, so the installed locations are empty, and PATH holds only
+ * the directory of the Node running this test. Keeps a real oam on the
+ * developer's box out of reach.
+ */
+function isolated(extra: Record<string, string> = {}): Record<string, string> {
+  const empty = mkdtempSync(join(tmpdir(), "electron-mcp-launcher-home-"));
+  return {
+    PATH: dirname(process.execPath),
+    USERPROFILE: empty,
+    HOME: empty,
+    LOCALAPPDATA: empty,
+    ...extra,
+  };
+}
+
+const MISSING_OAM = join(tmpdir(), "no-such-dir", "oam.exe");
 const servedInProcess = (run: LauncherRun) => run.code === 0 && run.stdout.trim() === PACKAGE_VERSION;
 const IN_LAUNCHER_PROCESS = /LAUNCHER_ARGV1=.*dist[\\/]index\.js/;
 const IN_CHILD = /LAUNCHER_ARGV1=.*electron-mcp\.mjs/;
@@ -538,10 +605,36 @@ describe("launcher on an oam host", () => {
     const args = recordedSpawnArgs(run);
     assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
     assert.equal(args[0], "run", `an unknown value must read as off: ${JSON.stringify(args)}`);
+    // States the reading only: it is printed before the launcher knows whether
+    // anything will serve, so it may not claim the server runs without the
+    // sandbox (that claim would sit above every fatal exit).
     assert.match(
       run.stderr,
-      /^electron-mcp: ELECTRON_MCP_SANDBOX=maybe is not recognised; set it to 1 to enable the sandbox or 0 to disable it\. The server runs WITHOUT --permission\.$/m,
+      /^electron-mcp: ELECTRON_MCP_SANDBOX=maybe is not recognised and is treated as off; set it to 1 to enable the sandbox or 0 to disable it\.$/m,
     );
+    assert.doesNotMatch(run.stderr, /WITHOUT --permission/);
+  });
+
+  it("names an unrecognised ELECTRON_MCP_RUNTIME value and treats it as auto", { skip }, async () => {
+    // A typo here used to fall through to auto in silence -- and under the
+    // fail-closed pairing that turned "sandbox required" into "sandbox if
+    // convenient" with nothing on stderr.
+    const run = await runLauncher(undefined, { ELECTRON_MCP_RUNTIME: "oam;" }, RECORD_SPAWN_ARGS);
+    assert.ok(recordedSpawnArgs(run), `auto must still discover and spawn: ${JSON.stringify(run)}`);
+    assert.match(
+      run.stderr,
+      /^electron-mcp: ELECTRON_MCP_RUNTIME=oam; is not recognised and is treated as auto; use auto, oam or node\.$/m,
+    );
+  });
+
+  it("trims ELECTRON_MCP_RUNTIME, so a padded `oam` keeps the fail-closed pairing closed", { skip }, async () => {
+    const run = await runLauncher(
+      undefined,
+      isolated({ ELECTRON_MCP_SANDBOX: "1", ELECTRON_MCP_RUNTIME: "oam ", OAM_BIN: MISSING_OAM }),
+    );
+    assert.equal(run.code, 1, `a padded oam must still be oam: ${JSON.stringify(run)}`);
+    assert.equal(run.stdout.trim(), "", "nothing may be served");
+    assert.doesNotMatch(run.stderr, /is not recognised/);
   });
 
   it(
@@ -560,11 +653,50 @@ describe("launcher on an oam host", () => {
       const args = recordedSpawnArgs(session);
       assert.ok(args, `no spawn was recorded: ${JSON.stringify(session)}`);
       assert.deepEqual(args.slice(0, 2), ["--permission", "run"], JSON.stringify(args));
+      // Piped, not inherited: read straight off the spawn options, because a
+      // Node posing as oam would complete the handshake either way and could
+      // not tell the two apart.
+      assert.deepEqual(recordedSpawnStdio(session), ["pipe", "pipe", "pipe"], "an oam host must pipe, never inherit");
       // Applied, so nothing to say: the sandbox is silent on success, and no
       // launcher line may claim otherwise.
       assert.doesNotMatch(session.stderr, /^electron-mcp: /m);
     },
   );
+
+  it("spawns a fresh copy of the host's OWN oam for the sandbox when nothing else is installed", { skip }, async () => {
+    // Yaw MCP launches this bin from an oam bundled inside the app -- not on
+    // PATH, not in an installed location. That host must be able to sandbox:
+    // its own binary is the one oam guaranteed to exist. The host here is the
+    // suite's Node posing as an oam of Node's own version, so the execPath
+    // probe agrees with the claimed version and it qualifies as the candidate;
+    // OAM_BIN is missing and PATH holds no oam, so nothing else could be chosen.
+    const session = await serveLauncher(
+      NODE_AS_HOST_OAM,
+      isolated({ ELECTRON_MCP_SANDBOX: "1", OAM_BIN: MISSING_OAM }),
+      SERVE_AS_OAM,
+    );
+    assert.deepEqual(session.answered, [1, 2], JSON.stringify(session));
+    const args = recordedSpawnArgs(session);
+    assert.ok(args, `no spawn was recorded: ${JSON.stringify(session)}`);
+    assert.deepEqual(args.slice(0, 2), ["--permission", "run"], JSON.stringify(args));
+    // The unusable OAM_BIN is still named, and the chosen binary is this one.
+    assert.match(session.stderr, /^electron-mcp: OAM_BIN=.*does not exist; using .* \(oam \d+\.\d+\.\d+\)\.$/m);
+    assert.doesNotMatch(session.stderr, /runs WITHOUT --permission/);
+  });
+
+  it("does not mistake a host whose binary reports a different version for its own oam", { skip }, async () => {
+    // The guard that keeps the case above honest: a wrapper on execPath, or a
+    // Node posing as "0.15.2", is not an oam that can spawn a sandboxed child.
+    // With nothing else to spawn, that host falls back in-process and says so.
+    const run = await runLauncher(
+      "0.15.2",
+      isolated({ ELECTRON_MCP_SANDBOX: "1", OAM_BIN: MISSING_OAM }),
+      RECORD_SPAWN_ARGS,
+    );
+    assert.equal(recordedSpawnArgs(run), null, `nothing may be spawned: ${JSON.stringify(run)}`);
+    assert.equal(run.stdout.trim(), PACKAGE_VERSION);
+    assert.match(run.stderr, SANDBOX_DROPPED);
+  });
 
   it("spawns with no --permission at all when the sandbox is not requested", { skip }, async () => {
     const run = await runLauncher(undefined, {}, RECORD_SPAWN_ARGS);
@@ -585,25 +717,6 @@ describe("launcher on an oam host", () => {
 });
 
 describe("launcher with no usable oam", () => {
-  /**
-   * An environment with no oam anywhere: HOME and LOCALAPPDATA point at an
-   * empty directory, so the installed locations are empty, and PATH holds only
-   * the directory of the Node running this test. Keeps a real oam on the
-   * developer's box out of reach.
-   */
-  function isolated(extra: Record<string, string> = {}): Record<string, string> {
-    const empty = mkdtempSync(join(tmpdir(), "electron-mcp-launcher-home-"));
-    return {
-      PATH: dirname(process.execPath),
-      USERPROFILE: empty,
-      HOME: empty,
-      LOCALAPPDATA: empty,
-      ...extra,
-    };
-  }
-
-  const MISSING_OAM = join(tmpdir(), "no-such-dir", "oam.exe");
-
   it("names an OAM_BIN that does not exist instead of falling back silently", { skip }, async () => {
     const run = await runLauncher(undefined, isolated({ OAM_BIN: MISSING_OAM }));
     assert.equal(run.code, 0, JSON.stringify(run));
@@ -621,6 +734,10 @@ describe("launcher with no usable oam", () => {
       run.stderr,
       /this process is oam 0\.9\.0, older than 0\.15\.2, and no newer oam was found; running on .*node/,
     );
+    // The OAM_BIN note names no target: Node has not been looked for at that
+    // point, and the handoff line above names it once it has been found.
+    assert.match(run.stderr, /^electron-mcp: OAM_BIN=.*does not exist\.$/m);
+    assert.doesNotMatch(run.stderr, /does not exist; using Node instead/);
     // Served by the child, not in the launcher process: argv[1] was never
     // pointed at dist/index.js.
     assert.match(run.stderr, IN_CHILD);
@@ -668,13 +785,13 @@ describe("launcher with no usable oam", () => {
       assert.equal(run.stdout.trim(), "", "nothing may be served");
       assert.match(
         run.stderr,
-        /ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.15\.2 or newer\) was found, and ELECTRON_MCP_SANDBOX=1 needs one\./,
+        /ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.15\.2 or newer\) was found, and ELECTRON_MCP_SANDBOX=\S+ needs one\./,
       );
       // The advice must not loop back: plain "use ELECTRON_MCP_RUNTIME=node"
       // would drop the sandbox the user just asked for without saying so.
       assert.match(
         run.stderr,
-        /or drop ELECTRON_MCP_SANDBOX=1 and use ELECTRON_MCP_RUNTIME=node \(Node cannot apply the sandbox\)\./,
+        /or drop ELECTRON_MCP_SANDBOX=\S+ and use ELECTRON_MCP_RUNTIME=node \(Node cannot apply the sandbox\)\./,
       );
       // Fatal is fatal: nothing may claim the server runs without the sandbox.
       assert.doesNotMatch(run.stderr, /runs WITHOUT --permission/);
@@ -766,10 +883,16 @@ describe("launcher with no usable oam", () => {
     const run = await runLauncher("0.9.0", isolated({ OAM_BIN: process.execPath }), FAIL_FIRST_SPAWN);
     assert.equal(run.code, 0, JSON.stringify(run));
     assert.equal(run.stdout.trim(), PACKAGE_VERSION, "the Node fallback must still serve");
-    assert.match(run.stderr, /failed to launch oam at .*using Node instead/);
+    // The launch-failure line names no target (Node has not been looked for
+    // yet); the handoff line that follows names it once found.
+    assert.match(run.stderr, /^electron-mcp: failed to launch oam at .*\)\.$/m);
+    assert.doesNotMatch(run.stderr, /failed to launch oam at .*using Node instead/);
     // A newer oam WAS found; it would not start. The handoff note must say
     // that, not that none was found.
-    assert.match(run.stderr, /this process is oam 0\.9\.0, older than 0\.15\.2, and the newer oam would not start;/);
+    assert.match(
+      run.stderr,
+      /this process is oam 0\.9\.0, older than 0\.15\.2, and the newer oam would not start; running on .*node/,
+    );
     assert.doesNotMatch(run.stderr, /no newer oam was found/);
   });
 

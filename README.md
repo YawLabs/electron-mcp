@@ -101,11 +101,17 @@ The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.
 
 The second variable is what makes the sandbox **required**: it needs a freshly spawned oam (0.15.2 or newer) to apply it, and with `ELECTRON_MCP_RUNTIME=oam` a missing or unusable oam is a startup error instead of an unsandboxed server. Under the default `ELECTRON_MCP_RUNTIME=auto` the launcher still serves in that case, **without** `--permission`, and prints a line on stderr saying so and how to fix it. Use `auto` when you want the sandbox where available; use `oam` when you want to be sure.
 
-How to tell it took: when the sandbox is applied the launcher prints nothing, and every path that serves without it after it was asked for prints an `electron-mcp:` line on stderr (most MCP clients show server stderr in their logs). With `ELECTRON_MCP_RUNTIME=oam`, silence means success.
+How to tell it took: every path that serves without the sandbox after it was asked for prints an `electron-mcp:` line on stderr containing `runs WITHOUT --permission`, plus how to fix it (most MCP clients show server stderr in their logs). When the sandbox is applied there is no such line. To confirm from a shell:
+
+```sh
+ELECTRON_MCP_SANDBOX=1 ELECTRON_MCP_RUNTIME=oam npx -y @yawlabs/electron-mcp@latest --version
+```
+
+The version on stdout, exit 0, and no `WITHOUT --permission` line means a sandboxed oam served it; with `ELECTRON_MCP_RUNTIME=oam` set, a missing oam is an error instead.
 
 It is off by default because it is a behaviour change: a future version that legitimately needs a capability should fail in review, not in your session. Two more things to know:
 
-- If the launcher itself is already running under oam (Yaw MCP does this), the sandbox spawns a second oam, because only a fresh one can apply a process-level flag. That adds one runtime boot to startup.
+- If the launcher itself is already running under oam (Yaw MCP does this), the sandbox spawns a second oam (the host's own binary, if nothing newer is installed), because only a fresh one can apply a process-level flag. That adds one runtime boot to startup, plus a `--version` probe per oam binary the launcher finds.
 - Request the sandbox through the variable, not by putting `--permission` on the host command: a launcher running under `--permission` cannot read its environment, so every `ELECTRON_MCP_*` setting would be ignored. (The direct, no-launcher form is `oam --permission run <path>/dist/index.js`.)
 
 | Variable | Effect |
@@ -113,8 +119,10 @@ It is off by default because it is a behaviour change: a future version that leg
 | `ELECTRON_MCP_RUNTIME=auto` | newest usable oam, else Node (default) |
 | `ELECTRON_MCP_RUNTIME=oam` | newest usable oam, else exit with an error |
 | `ELECTRON_MCP_RUNTIME=node` | always Node (the sandbox is not applied, and the launcher says so) |
-| `ELECTRON_MCP_SANDBOX=1` | run oam under `--permission` with no grants; `true` / `yes` / `on` also enable it, `0` / `false` / `no` / `off` disable it, and any other value is treated as off and named on stderr |
+| `ELECTRON_MCP_SANDBOX=1` | run oam under `--permission` with no grants; `true` / `yes` / `on` also enable it, `0` / `false` / `no` / `off` disable it |
 | `OAM_BIN=/path/to/oam` | use this oam when it is usable, before discovery |
+
+Both values are case-insensitive and trimmed. A value the launcher does not recognise is never a silent no-op: it is treated as the default (`auto`; sandbox off) and named on stderr, so a typo cannot quietly turn "sandbox required" into "sandbox if convenient".
 
 ## Tools (18)
 
