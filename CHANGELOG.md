@@ -4,6 +4,11 @@ All notable changes to `@yawlabs/electron-mcp` will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `release.sh` writes a `## [x.y.z]` changelog entry for every release -- promoting `[Unreleased]` when it has content, otherwise generating one from the commit subjects since the previous tag -- keeps the Keep-a-Changelog link references current when the file has them, and takes the GitHub release notes from that entry instead of from `git log` subjects. Before this, a release with nothing under `[Unreleased]` got no entry at all, and every GitHub release page showed raw commit subjects (1.5.0 and 1.5.1 shipped that way; their notes have been rewritten from the entries below).
+
 ## [1.5.1] — 2026-09-13
 
 ### Changed
