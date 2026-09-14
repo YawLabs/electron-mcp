@@ -61,12 +61,30 @@
  * over the same fds untouched.
  *
  * NO SANDBOX HERE
- * oam is run with no `--permission` flags. The rationale this header used to
- * give -- spawning app binaries, reading project directories, talking to a
- * DevTools endpoint -- described more than this server does: its tools take
- * code and config as string input and return generated code or findings, with
- * no process spawn, project-directory read, or network client anywhere in
- * `src/`.
+ * oam is run with no `--permission` flags. The sandbox is simply not wired up
+ * in this launcher today. That is not because this server would need wide-open
+ * grants: it drives no Electron app, and it never has. An earlier version of
+ * this header said it spawned app binaries, read project directories and
+ * connected to DevTools endpoints. None of that was true.
+ *
+ * What the server does is pure in-process computation over its tool arguments
+ * and embedded Electron knowledge. Some tools statically analyze code or build
+ * output they are handed; the rest generate code, config, checklists or
+ * explanations from built-in templates. Every tool returns markdown. Outside
+ * its test files, `src/` spawns no process, opens no socket, makes no network
+ * request, and reads no caller-supplied path. The `node:` import specifiers in
+ * the tool modules are text inside the Electron code the tools generate, not
+ * imports this process runs. The one filesystem touch is the server's own
+ * package.json, read by `resolveVersionFromPackageJson` in src/version.ts, and
+ * only on the tsc-only path: the shipped esbuild bundle substitutes
+ * `__VERSION__`, so it never gets there. The launcher in this file does spawn
+ * (the `oam --version` probes and the handoffs), but that is launcher code,
+ * not the server.
+ *
+ * Wiring a sandbox up is a behaviour change and belongs in its own change.
+ * @yawlabs/fetch-mcp shows the shape: an opt-in FETCH_MCP_SANDBOX=1. Such an
+ * opt-in also has to skip the in-process path under ALREADY RUNNING ON OAM,
+ * because only a freshly spawned oam can apply a process-level flag.
  *
  * MINIMUM OAM VERSION
  * The latest oam release, 0.15.2 -- bump OAM_MIN when oam ships a newer one.
@@ -74,11 +92,12 @@
  * falls back to Node. Below 0.9.0 `child_process.execFile` ran its arguments
  * through a SHELL, `exec` accepted `timeout` and ignored it, `spawnSync`
  * truncated at `maxBuffer` while reporting success, and
- * `stdio: 'inherit'`/`'ignore'` both behaved as `'pipe'`. This server's own
- * `src/` issues no `child_process` calls, so what the floor buys here is a
- * guarantee about the runtime underneath rather than a bug this server was
- * hitting -- but the launcher itself spawns, and the stdio handoff above is
- * exactly the `'inherit'` defect.
+ * `stdio: 'inherit'`/`'ignore'` both behaved as `'pipe'`. The server itself
+ * spawns nothing (the only `child_process` imports in `src/` are in test
+ * files), so those could not reach it; the floor is about serving only on the
+ * oam release every @yawlabs/*-mcp launcher is verified on. The launcher's own
+ * handoff from an old oam host does meet the `inherit` bug, which is why that
+ * handoff pipes.
  *
  * SELECTION
  *   ELECTRON_MCP_RUNTIME=auto   newest usable oam, else Node (default)
