@@ -314,6 +314,18 @@ npm run build || fail "Build failed"
 npm test || fail "Tests failed"
 info "Build + tests passed"
 
+# The sandbox differential (src/sandbox.test.ts) SKIPS when no oam at the
+# launcher's floor is reachable, so a green `npm test` above does not prove
+# it ran. It is the only runtime proof that every tool still answers under
+# bare --permission -- what ELECTRON_MCP_SANDBOX=1 ships -- so a release must
+# not go out on a skip. Re-run just that file and read node:test's own count.
+SANDBOX_TAP=$(cd dist && node --test-timeout=300000 --test sandbox.test.js 2>&1) || fail "sandbox differential failed:
+$SANDBOX_TAP"
+if ! echo "$SANDBOX_TAP" | grep -q '^# skipped 0$'; then
+  fail "The sandbox differential was skipped: no oam at or above OAM_MIN (see bin/electron-mcp.mjs) was found on OAM_BIN, in ~/.oam/bin, or on PATH. Install one from https://oamjs.org or set OAM_BIN, so the release is verified under --permission."
+fi
+info "Sandbox differential ran against a real oam"
+
 # =============================================================================
 # Step 3: Bump version
 # =============================================================================

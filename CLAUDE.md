@@ -4,7 +4,7 @@ Electron.js MCP server — IPC scaffolding, security auditing, build diagnostics
 
 ## Architecture
 
-18 tools total, across seven tool modules plus two shared support modules.
+18 tools total, across seven tool modules plus three shared support modules.
 
 - `src/index.ts` — Entry point. Registers all tools with McpServer, appends the knowledge footer, handles version subcommand.
 - `src/version.ts` — Resolves the package version (esbuild `__VERSION__` define, with a tsc-path `package.json` fallback).
@@ -44,9 +44,13 @@ This MCP does NOT wrap a REST API. It is a development intelligence server:
 - All tools return markdown-formatted strings (not JSON)
 - Version injected at build time via esbuild `define`
 
+## Launcher
+
+`bin/electron-mcp.mjs` is the npm `bin`. It prefers the newest usable oam runtime (floor `OAM_MIN`, the latest oam release) and otherwise serves in-process (on Node, or on a host oam at the floor) or, from an oam host below the floor, hands off to Node on `PATH`. Environment variables: `ELECTRON_MCP_RUNTIME` (`auto` | `oam` | `node`), `ELECTRON_MCP_SANDBOX=1` (spawn oam under bare `--permission`; opt-in, and never dropped silently: every path that serves without it says so on stderr), `OAM_BIN`. The header comment in the launcher is the design record. Tests: `src/launcher.test.ts` covers the pure decision functions by extracting their source and the wiring by running the real bin under a preloaded `process.versions.oam`; `src/bundle-surface.test.ts` pins the bundle's built-in imports and its zero `process.env` reads (the sandbox's static leg); `src/sandbox.test.ts` calls every tool under a real `oam --permission` and diffs against Node, skipping (loudly) where no oam at the floor is reachable via `OAM_BIN`, the installed locations, or `PATH` -- and `release.sh` refuses to release on that skip.
+
 ## Release process
 
-Run `./release.sh <version>` or trigger from CI with a version tag.
+Run `./release.sh <version>` from the workstation. There is no GitHub Actions workflow in this repo (Actions is disabled; `.github/` holds only `CODEOWNERS`), so the script is the whole release path: lint, build + test (including a check that the real-oam sandbox differential ran rather than skipped -- the workstation needs an oam at `OAM_MIN`), bump `package.json` / `server.json`, promote `CHANGELOG.md`'s `[Unreleased]` heading, commit + tag + push, `npm publish`, GitHub release, MCP Registry publish, then an `npx` smoke test of the published tarball. Each step is idempotent; re-run with the same version to resume. Document changes under `## [Unreleased]` in `CHANGELOG.md` before releasing; the script promotes that section into the version's entry and takes the GitHub release notes from it, and when `[Unreleased]` is empty it generates the entry from commit subjects instead.
 
 ## Dependency overrides
 

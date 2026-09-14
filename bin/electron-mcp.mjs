@@ -22,12 +22,15 @@
  *
  * For an MCP host config, point straight at oam and skip this file:
  *   { "command": "oam", "args": ["run", "<abs>/dist/index.js"] }
+ * or, sandboxed (see THE `--permission` SANDBOX below):
+ *   { "command": "oam", "args": ["--permission", "run", "<abs>/dist/index.js"] }
  *
  * WHICH OAM
  * OAM_BIN, when set and usable, is used as given. Otherwise every oam binary
- * discovery can see -- the installed locations, then PATH -- is asked for its
- * version, and the NEWEST one at or above the floor wins; a tie keeps search
- * order. Taking the first binary found instead let a stale copy early in the
+ * discovery can see -- the oam THIS process runs on, if any (see
+ * hostOamCandidate), then the installed locations, then PATH -- is asked for
+ * its version, and the NEWEST one at or above the floor wins; a tie keeps
+ * search order. Taking the first binary found instead let a stale copy early in the
  * search order hide a current one later: with oam 0.9.0 installed in ~/.oam/bin
  * and 0.15.2 on PATH, the launcher bound to 0.9.0 because installed locations
  * are searched first.
@@ -45,46 +48,87 @@
  * is imported into THIS process exactly as the Node fallback is -- no
  * discovery, no `oam --version` probe, no second oam. OAM_BIN is a discovery
  * input, so it is not consulted on that path: the host has already chosen
- * which oam runs. Nothing is lost by staying in the host, because this launcher
- * passes oam no process-level flag that only a fresh oam could apply (see NO
- * SANDBOX HERE).
+ * which oam runs.
+ *
+ * ELECTRON_MCP_SANDBOX=1 still takes the discovery path on such a host,
+ * deliberately: `--permission` is a process-level flag that only a FRESH oam
+ * can apply, so choosing in-process there would drop the sandbox without a
+ * word -- a security downgrade dressed up as an optimisation.
  *
  * A host oam BELOW the floor never serves. It used to, whenever discovery came
  * up empty. It now hands the server off to the newest usable oam, or to Node
  * found on PATH, or exits with an error when there is neither.
  *
- * That handoff PIPES stdio rather than inheriting it. Before 0.9.0 oam treated
- * `stdio: 'inherit'` as `'pipe'`, so an inherited handoff from such a host
- * connected the child to pipes nobody reads: measured with a real oam 0.8.2
- * host, the MCP handshake never answered. Piping the streams explicitly
- * completes it, to both oam and Node. A Node host keeps `inherit`, which hands
- * over the same fds untouched.
+ * Every handoff from an oam host PIPES stdio rather than inheriting it. Before
+ * 0.9.0 oam treated `stdio: 'inherit'` as `'pipe'`, so an inherited handoff
+ * from such a host connected the child to pipes nobody reads: measured with a
+ * real oam 0.8.2 host, the MCP handshake never answered. Piping the streams
+ * explicitly completes it, to both oam and Node, and is equally correct from a
+ * current oam, so the rule does not depend on the host's version. A Node host
+ * keeps `inherit`, which hands over the same fds untouched.
  *
- * NO SANDBOX HERE
- * oam is run with no `--permission` flags. The sandbox is simply not wired up
- * in this launcher today. That is not because this server would need wide-open
- * grants: it drives no Electron app, and it never has. An earlier version of
- * this header said it spawned app binaries, read project directories and
- * connected to DevTools endpoints. None of that was true.
+ * Discovery asks for a spawn; it does not guarantee one. If it finds no usable
+ * oam, or the spawn itself fails, the default ELECTRON_MCP_RUNTIME=auto falls
+ * back. A Node host runs the server in-process, and so does an oam host at the
+ * floor -- which only reaches discovery for the sandbox -- so under
+ * ELECTRON_MCP_SANDBOX=1 that fallback serves WITHOUT `--permission`. The
+ * launcher says so on stderr rather than downgrading silently, and
+ * ELECTRON_MCP_RUNTIME=oam makes a sandbox that cannot be applied fatal
+ * instead. A host below the floor hands off to Node.
  *
- * What the server does is pure in-process computation over its tool arguments
- * and embedded Electron knowledge. Some tools statically analyze code or build
- * output they are handed; the rest generate code, config, checklists or
- * explanations from built-in templates. Every tool returns markdown. Outside
- * its test files, `src/` spawns no process, opens no socket, makes no network
- * request, and reads no caller-supplied path. The `node:` import specifiers in
- * the tool modules are text inside the Electron code the tools generate, not
- * imports this process runs. The one filesystem touch is the server's own
- * package.json, read by `resolveVersionFromPackageJson` in src/version.ts, and
- * only on the tsc-only path: the shipped esbuild bundle substitutes
- * `__VERSION__`, so it never gets there. The launcher in this file does spawn
- * (the `oam --version` probes and the handoffs), but that is launcher code,
- * not the server.
+ * THE `--permission` SANDBOX (opt-in)
+ * `ELECTRON_MCP_SANDBOX=1` runs the server under oam's permission model with
+ * NO grants at all. Bare `--permission` denies filesystem, child-process and
+ * network access (each throws ERR_ACCESS_DENIED) and hides the environment
+ * (process.env reads as empty -- silently, not as an error), and this server
+ * needs none of them.
  *
- * Wiring a sandbox up is a behaviour change and belongs in its own change.
- * @yawlabs/fetch-mcp shows the shape: an opt-in FETCH_MCP_SANDBOX=1. Such an
- * opt-in also has to skip the in-process path under ALREADY RUNNING ON OAM,
- * because only a freshly spawned oam can apply a process-level flag.
+ * Its tools compute in-process over their arguments and embedded Electron
+ * knowledge, and return markdown. Outside its test files, `src/` spawns no
+ * process, opens no socket, makes no network request, and reads no
+ * caller-supplied path. The `node:` import specifiers in the tool modules are
+ * text inside the Electron code the tools generate, not imports this process
+ * runs. The one filesystem touch, `resolveVersionFromPackageJson` in
+ * src/version.ts, exists only on the tsc-only path: the shipped esbuild bundle
+ * substitutes `__VERSION__`, so it never runs. The bundle reads no environment
+ * variable either. Two tests keep that true rather than asserted:
+ * src/bundle-surface.test.ts pins the bundle's built-in imports to exactly
+ * `node:process` and `node:module` and its executable code to zero
+ * `process.env` reads (the env leg has to be static, since a denied env read
+ * does not throw), and src/sandbox.test.ts, wherever a real oam at the floor is
+ * installed, calls every tool under bare `--permission` and diffs the results
+ * against a plain Node run. Verified by hand as well against oam 0.15.2:
+ * `--version`, `initialize`, `tools/list` and every tool answer exactly as
+ * they do on Node, while a one-line `readFileSync` under the same flag -- and
+ * through this launcher's own spawn -- is refused with ERR_ACCESS_DENIED.
+ *
+ * So the value is entirely in what stays denied: a capability this server
+ * merely happens not to use today becomes a runtime refusal. It is opt-in
+ * because `--permission` is a behaviour change, and a server that gains a
+ * legitimate need for a capability should fail in review, not in a user's
+ * session. It costs no capability; on a host that already runs this launcher
+ * under oam it costs one runtime boot plus a `--version` probe per oam binary
+ * discovery finds, because the sandbox needs a fresh oam (see ALREADY RUNNING
+ * ON OAM). The launcher in this file does spawn -- those probes and the
+ * handoffs -- but that is launcher code running outside the sandbox, not the
+ * server.
+ *
+ * Request the sandbox through the environment variable, not by putting
+ * `--permission` on the HOST command (`oam --permission run <this file>`):
+ * under that host every process.env read is empty, so ELECTRON_MCP_SANDBOX,
+ * ELECTRON_MCP_RUNTIME and OAM_BIN are all inert. The outcome is still safe --
+ * the host's own sandbox covers the in-process server -- but nothing this
+ * launcher is told applies.
+ *
+ * When the sandbox IS applied the launcher prints no line about it (it may
+ * still mention an unusable OAM_BIN it passed over). Every path that serves
+ * WITHOUT it after it was asked for prints a line that contains
+ * `runs WITHOUT --permission`, plus how to get it applied. To make silence mean
+ * success, pair it with ELECTRON_MCP_RUNTIME=oam, which turns an unapplied
+ * sandbox into a startup failure. To confirm from a shell:
+ *   ELECTRON_MCP_SANDBOX=1 ELECTRON_MCP_RUNTIME=oam electron-mcp --version
+ * The version on stdout, exit 0 and no `WITHOUT --permission` line means the
+ * sandboxed oam served it.
  *
  * MINIMUM OAM VERSION
  * The latest oam release, 0.15.2 -- bump OAM_MIN when oam ships a newer one.
@@ -102,11 +146,21 @@
  * SELECTION
  *   ELECTRON_MCP_RUNTIME=auto   newest usable oam, else Node (default)
  *   ELECTRON_MCP_RUNTIME=oam    newest usable oam, else exit with an error
- *                               (already running on oam at the floor satisfies it)
+ *                               (already running on oam at the floor satisfies
+ *                               it, unless ELECTRON_MCP_SANDBOX=1 needs a
+ *                               fresh one)
  *   ELECTRON_MCP_RUNTIME=node   Node: in THIS process on Node, handed off to
  *                               Node on PATH when THIS process is oam
+ *   ELECTRON_MCP_SANDBOX=1      spawn oam under --permission (see above); not
+ *                               applied under ELECTRON_MCP_RUNTIME=node, and
+ *                               the launcher says so
  *   OAM_BIN=/path/to/oam        use this oam when it is usable, before discovery
- * The value is case-insensitive; anything else behaves like `auto`.
+ * Both values are case-insensitive and trimmed. A runtime value other than
+ * auto / oam / node is treated as auto and named on stderr. A sandbox value of
+ * 1 / true / yes / on enables it, 0 / false / no / off (or unset) disables it,
+ * and anything else is treated as off and named on stderr. Neither is ever a
+ * silent no-op: the fail-closed pairing (sandbox on + RUNTIME=oam) must not
+ * fall open on a typo.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -240,25 +294,95 @@ function pickNewest(candidates) {
 /**
  * Where the server runs, decided BEFORE any discovery:
  *   "in-process"   import it into THIS process
- *   "discover"     choose an oam and spawn it, or fall back to Node
+ *   "discover"     choose an oam and spawn it, or fall back (see fallBack)
  *   "handoff-node" hand it off to Node on PATH: THIS process is an oam and
- *                  Node was asked for
+ *                  ELECTRON_MCP_RUNTIME=node asked for Node
  *
  * `hostOam` is `process.versions.oam`: oam's own key, absent on Node. An oam
  * host whose version cannot be read is treated as below the floor -- it never
- * proved it is a supported oam. There is no sandbox input because this
- * launcher wires up no `--permission` flags (see NO SANDBOX HERE), so nothing
- * a fresh oam could apply is lost by staying in the host. The floor is OAM_MIN
- * itself, not a parameter, so a host oam and a discovered one can never be
- * held to different minimums.
+ * proved it is a supported oam. `sandbox` is whether a spawn would carry flags
+ * only a fresh oam can apply; see ALREADY RUNNING ON OAM above for why that
+ * alone forces the discovery path, and why discovery can still end in-process
+ * without those flags. Under `node` it is moot: Node has no `--permission` to
+ * apply. The floor is OAM_MIN itself, not a parameter, so a host oam and a
+ * discovered one can never be held to different minimums.
  *
  * Pure on purpose: every input is passed in, so the whole decision is testable
  * without booting a runtime.
  */
-function runtimePlan({ mode, hostOam }) {
+function runtimePlan({ mode, hostOam, sandbox }) {
   const onOam = hostOam !== undefined;
   if (mode === "node") return onOam ? "handoff-node" : "in-process";
+  if (sandbox) return "discover";
   return atLeast(parseVersion(hostOam ?? ""), OAM_MIN) ? "in-process" : "discover";
+}
+
+/**
+ * Whether a fallback may serve in THIS process: on Node, or on an oam host at
+ * the floor. The only host at the floor that ever reaches a fallback is one
+ * that took the discovery path for ELECTRON_MCP_SANDBOX=1, and it serves
+ * without `--permission`, as it always has. A host below the floor never
+ * serves.
+ *
+ * Pure on purpose, like runtimePlan.
+ */
+function fallbackInProcess(hostOam) {
+  return hostOam === undefined || atLeast(parseVersion(hostOam), OAM_MIN);
+}
+
+/**
+ * How ELECTRON_MCP_SANDBOX reads: "on", "off", or "unrecognised" (set to
+ * something that is neither). Case-insensitive, whitespace-trimmed, because a
+ * security opt-in that fails OPEN on `true`, `Yes` or a trailing space -- with
+ * nothing on stderr -- is the silent downgrade this launcher promises never to
+ * make. An unrecognised value is treated as off AND named on stderr (see the
+ * top-level `sandboxSetting` check below), never quietly honoured or quietly
+ * ignored.
+ *
+ * Pure on purpose, like runtimePlan: the accepted spellings are testable
+ * without booting anything.
+ */
+function parseSandboxSetting(value) {
+  if (value === undefined) return "off";
+  const v = value.trim().toLowerCase();
+  if (v === "" || v === "0" || v === "false" || v === "no" || v === "off") return "off";
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return "on";
+  return "unrecognised";
+}
+
+/**
+ * How ELECTRON_MCP_RUNTIME reads: `{ mode, recognised }`. Trimmed and
+ * case-insensitive; anything but auto / oam / node is `auto` with
+ * `recognised: false`, which the caller names on stderr. Silence here would
+ * let the fail-closed pairing (sandbox on + RUNTIME=oam) fall open on
+ * `"oam "` -- the same class of downgrade parseSandboxSetting exists to stop.
+ *
+ * Pure on purpose, like parseSandboxSetting.
+ */
+function parseRuntimeSetting(value) {
+  const v = (value ?? "").trim().toLowerCase();
+  // Unset and empty both mean the default, as they do for the sandbox value.
+  const mode = v === "" ? "auto" : v;
+  if (mode === "auto" || mode === "oam" || mode === "node") return { mode, recognised: true };
+  return { mode: "auto", recognised: false };
+}
+
+/**
+ * The `--permission` grant list, or [] when the sandbox is not requested.
+ *
+ * These are oam's PROCESS-level flags: they belong before the `run` subcommand,
+ * not after it. `oam run --permission file.js` is rejected outright, which is a
+ * good failure but only because it is loud -- ordering here is load-bearing.
+ *
+ * There is no `--allow-*` at all. This server reads no file, spawns no
+ * process, opens no socket and reads no environment variable (see THE
+ * `--permission` SANDBOX above), so every grant is omitted rather than emitted
+ * empty: under `--permission` an absent `--allow-fs-read` already denies
+ * everything, and `--allow-fs-read=` would state the same thing in a form that
+ * reads like an oversight.
+ */
+function sandboxFlags(setting) {
+  return setting === "on" ? ["--permission"] : [];
 }
 
 /**
@@ -324,10 +448,34 @@ function unusableReason(path, version, label = path) {
 }
 
 /**
- * Choose the oam to spawn: a usable OAM_BIN, else the newest usable discovered
- * binary. Returns the choice (or null) plus stderr notes: `overrideNote` about
- * an unusable OAM_BIN, and `skipped` describing what was found and rejected
- * when nothing was usable.
+ * The oam THIS process runs on, as a spawn candidate -- or null on Node.
+ *
+ * A host that launches `oam run <this file>` from an oam that is not on PATH
+ * and not in an installed location (Yaw MCP ships its own, inside the app)
+ * is the most common way to reach discovery from an oam host at all: the
+ * sandbox needs a fresh oam, and the one binary guaranteed to exist is the
+ * host's own. Without this, such a host reported "no usable oam was found"
+ * while being one.
+ *
+ * The binary must report the version the host says it is. A wrapper or shim
+ * on execPath, or a Node posing as oam (this launcher's own tests preload
+ * `process.versions.oam` onto Node), is not an oam that can spawn a child, and
+ * the one `--version` probe tells them apart.
+ */
+function hostOamCandidate() {
+  if (process.versions.oam === undefined) return null;
+  const version = oamVersion(process.execPath);
+  const claimed = parseVersion(process.versions.oam);
+  if (!version || !claimed || version.join(".") !== claimed.join(".")) return null;
+  return { path: process.execPath, version };
+}
+
+/**
+ * Choose the oam to spawn: a usable OAM_BIN, else the newest usable binary
+ * among the host's own oam (first, so it wins ties) and discovery. Returns the
+ * choice (or null) plus stderr notes: `overrideNote` about an unusable
+ * OAM_BIN, and `skipped` describing what was found and rejected when nothing
+ * was usable.
  */
 function chooseOam() {
   const override = process.env.OAM_BIN;
@@ -341,10 +489,14 @@ function chooseOam() {
       overrideNote = unusableReason(override, version, `OAM_BIN=${override}`);
     }
   }
-  const overrideKey = override ? pathKey(override) : null;
-  const candidates = discoverOamPaths()
-    .filter((path) => pathKey(path) !== overrideKey)
-    .map((path) => ({ path, version: oamVersion(path) }));
+  const host = hostOamCandidate();
+  const seen = new Set([override, host?.path].filter(Boolean).map(pathKey));
+  const candidates = [
+    ...(host ? [host] : []),
+    ...discoverOamPaths()
+      .filter((path) => !seen.has(pathKey(path)))
+      .map((path) => ({ path, version: oamVersion(path) })),
+  ];
   const chosen = pickNewest(candidates);
   const skipped = chosen ? [] : candidates.map((c) => unusableReason(c.path, c.version));
   return { chosen, overrideNote, skipped };
@@ -366,12 +518,14 @@ async function runInProcess() {
   await import(SERVER_URL.href);
 }
 
-// ONE reporter for every failed in-process fallback. runInProcess() is a bare
-// import() that rejects when dist/index.js is missing, and at ESM top level an
-// unhandled rejection is an uncaught exception -- replacing this launcher's
-// diagnostic with a raw stack trace.
-const fallbackFailed = (e) => {
-  process.stderr.write(`electron-mcp: fallback to Node failed (${e?.message ?? e})\n`);
+// ONE reporter for every failed in-process start, primary path or fallback.
+// runInProcess() is a bare import() that rejects when dist/index.js is missing,
+// and at ESM top level an unhandled rejection is an uncaught exception --
+// replacing this launcher's diagnostic with a raw stack trace. Names the
+// process it was starting in rather than "Node": under the sandbox an at-floor
+// oam host falls back on itself.
+const startFailed = (e) => {
+  process.stderr.write(`electron-mcp: could not start the server in ${fallbackTarget(hostOam)} (${e?.message ?? e})\n`);
   process.exitCode = 1;
 };
 
@@ -383,10 +537,11 @@ const fallbackFailed = (e) => {
  * on the same stdio.
  */
 async function launchChild(cmd, args, onLaunchFailed) {
-  // THIS process being an oam means one below the floor, or any oam under
-  // ELECTRON_MCP_RUNTIME=node. A below-floor oam's `stdio: 'inherit'` does not
-  // hand over the fds, so pipe explicitly whenever the host is oam; see ALREADY
-  // RUNNING ON OAM.
+  // Every handoff from an oam host pipes; see ALREADY RUNNING ON OAM. That is a
+  // host below the floor, one at the floor spawning a fresh oam for the
+  // sandbox, or any oam under ELECTRON_MCP_RUNTIME=node. A below-floor oam's
+  // `stdio: 'inherit'` does not hand over the fds, and piping is equally
+  // correct from a current one.
   const piped = process.versions.oam !== undefined;
   let child = null;
   try {
@@ -404,7 +559,7 @@ async function launchChild(cmd, args, onLaunchFailed) {
     // 'error' listener is registered AFTER this call, so it can never observe
     // one -- an uncaught throw here kills the launcher with a raw stack trace
     // instead of falling back.
-    await onLaunchFailed(err).catch(fallbackFailed);
+    await onLaunchFailed(err).catch(startFailed);
     return;
   }
 
@@ -432,7 +587,7 @@ async function launchChild(cmd, args, onLaunchFailed) {
   });
   child.on("error", (err) => {
     if (spawned) return;
-    onLaunchFailed(err).catch(fallbackFailed);
+    onLaunchFailed(err).catch(startFailed);
   });
   // A child that exits before reading everything closes its stdin; the
   // resulting EPIPE is not worth crashing over.
@@ -502,46 +657,135 @@ async function launchChild(cmd, args, onLaunchFailed) {
 /**
  * Hand the server to Node on PATH. Only reachable when THIS process is oam --
  * one below the floor, or any oam under ELECTRON_MCP_RUNTIME=node -- so there
- * is no in-process option left.
+ * is no in-process option left. `reason` is printed before the handoff; empty
+ * means Node was asked for, which is not news. `sandboxWhy`, when the sandbox
+ * was requested, is printed only once Node has been found: a line saying the
+ * server runs without `--permission` must not precede an exit that served
+ * nothing.
  */
-async function handOffToNode(reason) {
+async function handOffToNode(reason, sandboxWhy) {
   const node = findNodeOnPath();
   if (!node) {
-    await errSync(
-      `electron-mcp: ${reason}, and no Node was found on PATH to run the server instead.\n` +
-        `Run \`oam self-update\` to get oam ${OAM_MIN.join(".")} or newer, or launch this command with node.\n`,
-    );
+    // On an oam at the floor under ELECTRON_MCP_RUNTIME=node, the only
+    // obstacle to serving is that setting: THIS process could serve. Say so.
+    const onUsableOam = atLeast(parseVersion(process.versions.oam), OAM_MIN);
+    const serveHere = onUsableOam ? `, or remove ELECTRON_MCP_RUNTIME=node to serve on this oam ${process.versions.oam}` : "";
+    const remedy =
+      mode === "node"
+        ? `Put Node on PATH, launch this command with node${serveHere}.\n`
+        : `Run \`oam self-update\` to get oam ${OAM_MIN.join(".")} or newer, or launch this command with node.\n`;
+    const what = reason || `ELECTRON_MCP_RUNTIME=node on oam ${process.versions.oam}`;
+    await errSync(`electron-mcp: ${what}, and no Node was found on PATH to run the server.\n${remedy}`);
     process.exit(1);
   }
   if (reason) await errSync(`electron-mcp: ${reason}; running on ${node} instead.\n`);
+  await noteSandboxNotApplied(sandboxWhy);
   await launchChild(node, [SERVER_ENTRY, ...process.argv.slice(2)], async (err) => {
     await errSync(`electron-mcp: failed to launch Node at ${node} (${err?.message ?? err})\n`);
     process.exit(1);
   });
 }
 
+/** What a fallback serves on, for stderr. */
+function fallbackTarget(hostOam) {
+  return hostOam !== undefined && fallbackInProcess(hostOam) ? `this oam ${hostOam} process` : "Node";
+}
+
 /**
- * No usable oam, or the chosen one would not start, under a mode that allows
- * Node. `why` finishes the below-floor handoff note, so it can say which of
- * the two happened.
+ * The "; using X instead" suffix for a fallback announcement -- only when the
+ * fallback serves in THIS process, which cannot fail to be found. A handoff to
+ * Node has not looked for Node yet; handOffToNode names it once it has, so an
+ * announcement here cannot sit above "no Node was found on PATH".
  */
-async function fallBackToNode(hostOam, why) {
-  if (hostOam === undefined) {
+function fallbackSuffix(hostOam) {
+  return fallbackInProcess(hostOam) ? `; using ${fallbackTarget(hostOam)} instead` : "";
+}
+
+/**
+ * The one line that keeps a dropped sandbox from being silent. Printed on every
+ * path that serves without `--permission` after it was asked for -- a fallback
+ * (nothing usable to spawn, or the spawn failed), and ELECTRON_MCP_RUNTIME=node,
+ * where there is no oam to apply it -- and printed only once that path is
+ * committed to serving, so it never sits next to an exit that served nothing.
+ * `why` is a clause; the line names the consequence, how to get the sandbox
+ * applied, and how to make its absence fatal instead.
+ */
+async function noteSandboxNotApplied(why) {
+  if (sandbox.length === 0) return;
+  const remedy =
+    mode === "node"
+      ? "Remove ELECTRON_MCP_RUNTIME=node to let the launcher use oam.\n"
+      : `To apply it, install or update oam (${OAM_MIN.join(".")} or newer) from https://oamjs.org or set ` +
+        "OAM_BIN=/path/to/oam; set ELECTRON_MCP_RUNTIME=oam to make this fatal instead.\n";
+  await errSync(
+    `electron-mcp: ${sandboxAsSet} was not applied -- ${why}, so the server runs WITHOUT --permission.\n${remedy}`,
+  );
+}
+
+/**
+ * No usable oam, or it would not start, under a mode that allows a fallback.
+ * `why` finishes the below-floor handoff note, so it can say which of the two
+ * happened.
+ */
+async function fallBack(hostOam, why) {
+  // "fresh" is the word that makes this line make sense on a host that IS an
+  // oam at the floor: it just said "using this oam 0.15.2 process", and only a
+  // freshly spawned oam can apply a process-level flag.
+  const sandboxWhy = `a fresh oam (${OAM_MIN.join(".")} or newer) is needed to apply it and none could be spawned`;
+  if (fallbackInProcess(hostOam)) {
+    await noteSandboxNotApplied(sandboxWhy);
     await runInProcess();
     return;
   }
-  await handOffToNode(`this process is oam ${hostOam}, older than ${OAM_MIN.join(".")}, and ${why}`);
+  await handOffToNode(`this process is oam ${hostOam}, older than ${OAM_MIN.join(".")}, and ${why}`, sandboxWhy);
 }
 
-const mode = (process.env.ELECTRON_MCP_RUNTIME ?? "auto").toLowerCase();
+const runtimeSetting = parseRuntimeSetting(process.env.ELECTRON_MCP_RUNTIME);
+const mode = runtimeSetting.mode;
 const hostOam = process.versions.oam;
-const plan = runtimePlan({ mode, hostOam });
+
+// The sandbox is read off the grant list rather than ELECTRON_MCP_SANDBOX, so
+// "would the spawn carry --permission" cannot drift from what the spawn below
+// actually passes.
+const sandboxSetting = parseSandboxSetting(process.env.ELECTRON_MCP_SANDBOX);
+const sandbox = sandboxFlags(sandboxSetting);
+// The value as the user wrote it (trimmed: an accepted "1 " should not print
+// as a double space), so every line about it matches their config.
+const sandboxAsSet = `ELECTRON_MCP_SANDBOX=${(process.env.ELECTRON_MCP_SANDBOX ?? "").trim()}`;
+
+// Both settings: set to something, but nothing this launcher understands.
+// The safe reading of an unknown value is the default (auto; sandbox off) --
+// honouring a guess could sandbox a server whose operator meant to switch the
+// sandbox off -- but the default must never be silent. These lines describe
+// the READING only; whether the server then serves is not known yet, so they
+// make no claim about it.
+if (!runtimeSetting.recognised) {
+  await errSync(
+    `electron-mcp: ELECTRON_MCP_RUNTIME=${(process.env.ELECTRON_MCP_RUNTIME ?? "").trim()} is not recognised ` +
+      "and is treated as auto; use auto, oam or node.\n",
+  );
+}
+if (sandboxSetting === "unrecognised") {
+  await errSync(
+    `electron-mcp: ${sandboxAsSet} is not recognised and is treated as off; ` +
+      "set it to 1 to enable the sandbox or 0 to disable it.\n",
+  );
+}
+const plan = runtimePlan({ mode, hostOam, sandbox: sandbox.length > 0 });
+
+// Only ELECTRON_MCP_RUNTIME=node reaches either non-discovery plan with the
+// sandbox requested; a sandboxed `auto` or `oam` always discovers.
+const SANDBOX_MOOT_ON_NODE = "ELECTRON_MCP_RUNTIME=node runs the server on Node, which has no oam sandbox";
 
 if (plan === "in-process") {
-  await runInProcess();
+  await noteSandboxNotApplied(SANDBOX_MOOT_ON_NODE);
+  await runInProcess().catch(startFailed);
 } else if (plan === "handoff-node") {
   const belowFloor = !atLeast(parseVersion(hostOam), OAM_MIN);
-  await handOffToNode(belowFloor ? `this process is oam ${hostOam}, older than ${OAM_MIN.join(".")}` : "");
+  await handOffToNode(
+    belowFloor ? `this process is oam ${hostOam}, older than ${OAM_MIN.join(".")}` : "",
+    SANDBOX_MOOT_ON_NODE,
+  );
 } else {
   const { chosen, overrideNote, skipped } = chooseOam();
 
@@ -549,17 +793,18 @@ if (plan === "in-process") {
     if (overrideNote) {
       await errSync(`electron-mcp: ${overrideNote}; using ${chosen.path} (oam ${chosen.version.join(".")}).\n`);
     }
-    // `--` separates oam's own flags from the script's argv, so `electron-mcp
-    // --version` and any host-supplied flags survive the hop unchanged.
-    await launchChild(chosen.path, ["run", SERVER_ENTRY, "--", ...process.argv.slice(2)], async (err) => {
+    // The sandbox flags go BEFORE `run` (see sandboxFlags), and `--` separates
+    // oam's own flags from the script's argv, so `electron-mcp --version` and
+    // any host-supplied flags survive the hop unchanged.
+    await launchChild(chosen.path, [...sandbox, "run", SERVER_ENTRY, "--", ...process.argv.slice(2)], async (err) => {
       if (mode === "oam") {
         await errSync(`electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err})\n`);
         process.exit(1);
       }
       await errSync(
-        `electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err}); using Node instead.\n`,
+        `electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err})${fallbackSuffix(hostOam)}.\n`,
       );
-      await fallBackToNode(hostOam, "the newer oam would not start");
+      await fallBack(hostOam, "the newer oam would not start");
     });
   } else {
     const shim = findOamShim();
@@ -573,16 +818,27 @@ if (plan === "in-process") {
         : []),
     ];
     if (mode === "oam") {
+      // With the sandbox requested, "use ELECTRON_MCP_RUNTIME=node" is not a
+      // remedy but a trade: Node cannot apply it. Say so, or the advice loops --
+      // the fallback note sends people to RUNTIME=oam, and this error would
+      // send them straight back.
+      const nodeOption =
+        sandbox.length > 0
+          ? `or drop ${sandboxAsSet} and use ELECTRON_MCP_RUNTIME=node (Node cannot apply the sandbox)`
+          : "or use ELECTRON_MCP_RUNTIME=node";
       await errSync(
-        `electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam (${OAM_MIN.join(".")} or newer) was found.\n` +
+        `electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam (${OAM_MIN.join(".")} or newer) was found` +
+          `${sandbox.length > 0 ? `, and ${sandboxAsSet} needs one` : ""}.\n` +
           notes.map((note) => `  ${note}\n`).join("") +
-          "Install or update from https://oamjs.org, set OAM_BIN=/path/to/oam, or use ELECTRON_MCP_RUNTIME=node.\n",
+          `Install or update from https://oamjs.org, set OAM_BIN=/path/to/oam, ${nodeOption}.\n`,
       );
       process.exit(1);
     }
     // auto: falling back is correct, but silence is how someone never learns
     // their OAM_BIN is wrong or their oam is too old to use.
-    if (notes.length > 0) await errSync(`electron-mcp: ${notes.join("; ")}; using Node instead.\n`);
-    await fallBackToNode(hostOam, "no newer oam was found").catch(fallbackFailed);
+    if (notes.length > 0) {
+      await errSync(`electron-mcp: ${notes.join("; ")}${fallbackSuffix(hostOam)}.\n`);
+    }
+    await fallBack(hostOam, "no newer oam was found").catch(startFailed);
   }
 }
