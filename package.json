@@ -34,7 +34,8 @@
     "desktop",
     "claude-code",
     "cursor",
-    "ai"
+    "ai",
+    "ai-agents"
   ],
   "type": "module",
   "main": "dist/index.js",
