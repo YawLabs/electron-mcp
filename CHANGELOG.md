@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - A fallback announcement names its target ("using Node instead") only when that target is this process; a handoff to Node names it once Node has actually been found, so the line can no longer sit above "no Node was found on PATH".
 - A missing `dist/index.js` on the primary in-process path now prints an `electron-mcp:` diagnostic instead of a raw stack trace.
 - `release.sh` writes a `## [x.y.z]` changelog entry for every release -- promoting `[Unreleased]` when it has content, otherwise generating one from the commit subjects since the previous tag -- keeps the Keep-a-Changelog link references current when the file has them, and takes the GitHub release notes from that entry instead of from `git log` subjects. Before this, a release with nothing under `[Unreleased]` got no entry at all, and every GitHub release page showed raw commit subjects (1.5.0 and 1.5.1 shipped that way; their notes have been rewritten from the entries below).
+- package.json keywords: the core discoverability terms (claude-code, cursor, ai-agents) now come before the topic-specific ones, so they survive GitHub's 20-topic cap when topics are synced from keywords.
 
 ## [1.5.1] — 2026-09-13
 
