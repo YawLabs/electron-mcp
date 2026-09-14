@@ -92,11 +92,12 @@
  * falls back to Node. Below 0.9.0 `child_process.execFile` ran its arguments
  * through a SHELL, `exec` accepted `timeout` and ignored it, `spawnSync`
  * truncated at `maxBuffer` while reporting success, and
- * `stdio: 'inherit'`/`'ignore'` both behaved as `'pipe'`. The server spawns
- * nothing (the only `child_process` imports in `src/` are in test files), so
- * what the floor buys here is a guarantee about the runtime underneath rather
- * than a bug this server was hitting -- but the launcher itself spawns, and the
- * stdio handoff above is exactly the `'inherit'` defect.
+ * `stdio: 'inherit'`/`'ignore'` both behaved as `'pipe'`. The server itself
+ * spawns nothing (the only `child_process` imports in `src/` are in test
+ * files), so those could not reach it; the floor is about serving only on the
+ * oam release every @yawlabs/*-mcp launcher is verified on. The launcher's own
+ * handoff from an old oam host does meet the `inherit` bug, which is why that
+ * handoff pipes.
  *
  * SELECTION
  *   ELECTRON_MCP_RUNTIME=auto   newest usable oam, else Node (default)
