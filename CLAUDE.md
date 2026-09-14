@@ -46,7 +46,7 @@ This MCP does NOT wrap a REST API. It is a development intelligence server:
 
 ## Launcher
 
-`bin/electron-mcp.mjs` is the npm `bin`. It prefers the newest usable oam runtime (floor `OAM_MIN`, the latest oam release) and falls back to Node in-process. Environment variables: `ELECTRON_MCP_RUNTIME` (`auto` | `oam` | `node`), `ELECTRON_MCP_SANDBOX=1` (spawn oam under bare `--permission`; opt-in, and never dropped silently: every path that serves without it says so on stderr), `OAM_BIN`. The header comment in the launcher is the design record; `src/launcher.test.ts` tests the pure decision functions by extracting their source, and the wiring by running the real bin under a preloaded `process.versions.oam`.
+`bin/electron-mcp.mjs` is the npm `bin`. It prefers the newest usable oam runtime (floor `OAM_MIN`, the latest oam release) and otherwise serves in-process (on Node, or on a host oam at the floor) or, from an oam host below the floor, hands off to Node on `PATH`. Environment variables: `ELECTRON_MCP_RUNTIME` (`auto` | `oam` | `node`), `ELECTRON_MCP_SANDBOX=1` (spawn oam under bare `--permission`; opt-in, and never dropped silently: every path that serves without it says so on stderr), `OAM_BIN`. The header comment in the launcher is the design record. Tests: `src/launcher.test.ts` covers the pure decision functions by extracting their source and the wiring by running the real bin under a preloaded `process.versions.oam`; `src/bundle-surface.test.ts` pins the bundle's built-in imports and its zero `process.env` reads (the sandbox's static leg); `src/sandbox.test.ts` calls every tool under a real `oam --permission` and diffs against Node, skipping where no oam at the floor is installed.
 
 ## Release process
 

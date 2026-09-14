@@ -20,6 +20,8 @@ type RuntimePlan = (ctx: { mode: string; hostOam: string | undefined; sandbox: b
 type Candidate = { path: string; version: number[] | null };
 type PickNewest = (candidates: Candidate[]) => Candidate | null;
 type FallbackInProcess = (hostOam: string | undefined) => boolean;
+type SandboxSetting = "on" | "off" | "unrecognised";
+type ParseSandboxSetting = (value: string | undefined) => SandboxSetting;
 
 /** Pull named declarations out of the launcher source, loudly. */
 function extract(patterns: RegExp[]): string {
@@ -153,6 +155,34 @@ describe("launcher runtimePlan()", () => {
   });
 });
 
+describe("launcher parseSandboxSetting()", () => {
+  const parse = new Function(
+    `${extract([/function parseSandboxSetting\(value\) \{[\s\S]*?\n\}/])}\nreturn parseSandboxSetting;`,
+  )() as ParseSandboxSetting;
+
+  it("enables on the common truthy spellings, case-insensitively and trimmed", () => {
+    // A security opt-in that fails OPEN on `true` -- the natural spelling in a
+    // JSON env block -- with nothing on stderr is a silent downgrade.
+    for (const value of ["1", "true", "TRUE", "Yes", "on", " 1", "1 ", "\ton\n"]) {
+      assert.equal(parse(value), "on", JSON.stringify(value));
+    }
+  });
+
+  it("disables on unset, empty, and the common falsy spellings", () => {
+    for (const value of [undefined, "", "0", "false", "False", "no", "OFF", "  "]) {
+      assert.equal(parse(value), "off", JSON.stringify(value));
+    }
+  });
+
+  it("reports anything else as unrecognised rather than guessing", () => {
+    // Off is the safe reading of an unknown value; the launcher names it on
+    // stderr so it is never a silent no-op either.
+    for (const value of ["maybe", "01", "enable", "2", "yes please"]) {
+      assert.equal(parse(value), "unrecognised", JSON.stringify(value));
+    }
+  });
+});
+
 describe("launcher fallbackInProcess()", () => {
   const fallbackInProcess = loadFallbackInProcess();
 
@@ -259,10 +289,35 @@ const RECORD_SPAWN_ARGS = [
 ].join("\n");
 
 /** The argv of the first spawn a RECORD_SPAWN_ARGS run reported, or null. */
-function recordedSpawnArgs(run: LauncherRun): string[] | null {
+function recordedSpawnArgs(run: { stderr: string }): string[] | null {
   const line = run.stderr.split("\n").find((l) => l.startsWith("SPAWN_ARGS="));
   return line ? (JSON.parse(line.slice("SPAWN_ARGS=".length)) as string[]) : null;
 }
+
+/**
+ * Preload source that records the spawn argv like RECORD_SPAWN_ARGS and then
+ * rewrites oam's `[...flags, "run", <entry>, "--", ...argv]` into the Node form
+ * `[<entry>, ...argv]` before spawning. OAM_BIN is the Node running the suite,
+ * so the "oam" the launcher chose is a Node that can actually SERVE: this is
+ * how the suite exercises a successful sandboxed spawn end to end -- the
+ * launcher's piped stdio, the MCP handshake through it, and the child's exit
+ * mirrored -- without a real oam on the box. The recorded argv still shows
+ * exactly what a real oam would have received.
+ */
+const SERVE_AS_OAM = [
+  'import childProcess from "node:child_process";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  'import { writeSync as writeStderr } from "node:fs";',
+  "const realSpawn = childProcess.spawn;",
+  "childProcess.spawn = function (cmd, args, opts) {",
+  '  writeStderr(2, "SPAWN_ARGS=" + JSON.stringify(args) + "\\n");',
+  '  const run = args.indexOf("run");',
+  '  const dashdash = args.indexOf("--");',
+  "  const nodeArgs = run === -1 ? args : [args[run + 1], ...args.slice(dashdash + 1)];",
+  "  return realSpawn.call(this, cmd, nodeArgs, opts);",
+  "};",
+  "syncBuiltinESMExports();",
+].join("\n");
 
 type ServeSession = { answered: number[]; stderr: string; exitedOnItsOwn: boolean; code: number | null };
 
@@ -405,7 +460,10 @@ const skip = existsSync(DIST_BIN) ? false : "dist/index.js is not built";
 const servedInProcess = (run: LauncherRun) => run.code === 0 && run.stdout.trim() === PACKAGE_VERSION;
 const IN_LAUNCHER_PROCESS = /LAUNCHER_ARGV1=.*dist[\\/]index\.js/;
 const IN_CHILD = /LAUNCHER_ARGV1=.*electron-mcp\.mjs/;
-const SANDBOX_DROPPED = /^electron-mcp: ELECTRON_MCP_SANDBOX=1 was not applied -- .*WITHOUT --permission\.$/m;
+const SANDBOX_DROPPED =
+  /^electron-mcp: ELECTRON_MCP_SANDBOX=\S+ was not applied -- .*so the server runs WITHOUT --permission\.$/m;
+const SANDBOX_REMEDY =
+  /^To apply it, install or update oam \(0\.15\.2 or newer\) from https:\/\/oamjs\.org or set OAM_BIN=\/path\/to\/oam; set ELECTRON_MCP_RUNTIME=oam to make this fatal instead\.$/m;
 
 describe("launcher on an oam host", () => {
   it("control: on plain Node the launcher still discovers and spawns", { skip }, async () => {
@@ -454,6 +512,59 @@ describe("launcher on an oam host", () => {
       `no grant may be emitted: ${JSON.stringify(args)}`,
     );
   });
+
+  it("accepts ELECTRON_MCP_SANDBOX=true as well as 1, and 0/false as off", { skip }, async () => {
+    // The parser is unit-tested above; this pins that the launcher actually
+    // routes the env var through it. `true` is the natural spelling in a JSON
+    // env block, and it used to fail OPEN with nothing on stderr.
+    for (const value of ["true", "Yes"]) {
+      const run = await runLauncher(undefined, { ELECTRON_MCP_SANDBOX: value }, RECORD_SPAWN_ARGS);
+      const args = recordedSpawnArgs(run);
+      assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+      assert.equal(args[0], "--permission", `ELECTRON_MCP_SANDBOX=${value}: ${JSON.stringify(args)}`);
+      assert.doesNotMatch(run.stderr, /^electron-mcp: /m);
+    }
+    for (const value of ["0", "false"]) {
+      const run = await runLauncher(undefined, { ELECTRON_MCP_SANDBOX: value }, RECORD_SPAWN_ARGS);
+      const args = recordedSpawnArgs(run);
+      assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+      assert.equal(args[0], "run", `ELECTRON_MCP_SANDBOX=${value}: ${JSON.stringify(args)}`);
+      assert.doesNotMatch(run.stderr, /^electron-mcp: /m, "an explicit off is not news");
+    }
+  });
+
+  it("names an unrecognised ELECTRON_MCP_SANDBOX value and runs without the sandbox", { skip }, async () => {
+    const run = await runLauncher(undefined, { ELECTRON_MCP_SANDBOX: "maybe" }, RECORD_SPAWN_ARGS);
+    const args = recordedSpawnArgs(run);
+    assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+    assert.equal(args[0], "run", `an unknown value must read as off: ${JSON.stringify(args)}`);
+    assert.match(
+      run.stderr,
+      /^electron-mcp: ELECTRON_MCP_SANDBOX=maybe is not recognised; set it to 1 to enable the sandbox or 0 to disable it\. The server runs WITHOUT --permission\.$/m,
+    );
+  });
+
+  it(
+    "serves through a sandboxed spawn from an oam host: piped stdio, full handshake, --permission on the argv",
+    { skip },
+    async () => {
+      // The primary new path, end to end: an at-floor oam host under the sandbox
+      // spawns a fresh runtime with --permission before `run`, pipes stdio into
+      // it (an oam host never inherits -- see ALREADY RUNNING ON OAM), and the
+      // MCP session completes through the pipes. The child is the Node running
+      // this suite, posing as oam; SERVE_AS_OAM records the oam-shaped argv and
+      // translates it so Node can serve.
+      const session = await serveLauncher("0.15.2", { ELECTRON_MCP_SANDBOX: "1" }, SERVE_AS_OAM);
+      assert.deepEqual(session.answered, [1, 2], JSON.stringify(session));
+      assert.equal(session.exitedOnItsOwn, false, JSON.stringify(session));
+      const args = recordedSpawnArgs(session);
+      assert.ok(args, `no spawn was recorded: ${JSON.stringify(session)}`);
+      assert.deepEqual(args.slice(0, 2), ["--permission", "run"], JSON.stringify(args));
+      // Applied, so nothing to say: the sandbox is silent on success, and no
+      // launcher line may claim otherwise.
+      assert.doesNotMatch(session.stderr, /^electron-mcp: /m);
+    },
+  );
 
   it("spawns with no --permission at all when the sandbox is not requested", { skip }, async () => {
     const run = await runLauncher(undefined, {}, RECORD_SPAWN_ARGS);
@@ -524,9 +635,12 @@ describe("launcher with no usable oam", () => {
       assert.equal(run.stdout.trim(), PACKAGE_VERSION);
       assert.match(run.stderr, IN_LAUNCHER_PROCESS);
       assert.match(run.stderr, /^electron-mcp: OAM_BIN=.*does not exist; using this oam 0\.15\.2 process instead\.$/m);
-      // The downgrade is never silent, and the way to make it fatal is named.
+      // The downgrade is never silent; the line explains itself on a host that
+      // IS an oam ("fresh"), says how to get the sandbox applied, and names the
+      // way to make its absence fatal.
       assert.match(run.stderr, SANDBOX_DROPPED);
-      assert.match(run.stderr, /^Set ELECTRON_MCP_RUNTIME=oam to make this fatal instead\.$/m);
+      assert.match(run.stderr, /a fresh oam \(0\.15\.2 or newer\) is needed to apply it and none could be spawned/);
+      assert.match(run.stderr, SANDBOX_REMEDY);
     },
   );
 
@@ -552,7 +666,33 @@ describe("launcher with no usable oam", () => {
       );
       assert.equal(run.code, 1, JSON.stringify(run));
       assert.equal(run.stdout.trim(), "", "nothing may be served");
-      assert.match(run.stderr, /ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.15\.2 or newer\) was found/);
+      assert.match(
+        run.stderr,
+        /ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.15\.2 or newer\) was found, and ELECTRON_MCP_SANDBOX=1 needs one\./,
+      );
+      // The advice must not loop back: plain "use ELECTRON_MCP_RUNTIME=node"
+      // would drop the sandbox the user just asked for without saying so.
+      assert.match(
+        run.stderr,
+        /or drop ELECTRON_MCP_SANDBOX=1 and use ELECTRON_MCP_RUNTIME=node \(Node cannot apply the sandbox\)\./,
+      );
+      // Fatal is fatal: nothing may claim the server runs without the sandbox.
+      assert.doesNotMatch(run.stderr, /runs WITHOUT --permission/);
+    },
+  );
+
+  it(
+    "under ELECTRON_MCP_RUNTIME=oam without the sandbox, the error still offers ELECTRON_MCP_RUNTIME=node plainly",
+    { skip },
+    async () => {
+      const run = await runLauncher("0.9.0", isolated({ ELECTRON_MCP_RUNTIME: "oam", OAM_BIN: MISSING_OAM }));
+      assert.equal(run.code, 1, JSON.stringify(run));
+      assert.match(
+        run.stderr,
+        /^electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.15\.2 or newer\) was found\.$/m,
+      );
+      assert.match(run.stderr, /, or use ELECTRON_MCP_RUNTIME=node\.$/m);
+      assert.doesNotMatch(run.stderr, /SANDBOX/);
     },
   );
 
@@ -566,8 +706,9 @@ describe("launcher with no usable oam", () => {
       assert.match(run.stderr, IN_LAUNCHER_PROCESS);
       assert.match(run.stderr, SANDBOX_DROPPED);
       assert.match(run.stderr, /ELECTRON_MCP_RUNTIME=node runs the server on Node/);
-      // Pointing at ELECTRON_MCP_RUNTIME=oam is the fix for a fallback, not for
-      // an explicit request to run on Node.
+      // The next step for an explicit request to run on Node is to drop that
+      // request, not to demand oam.
+      assert.match(run.stderr, /^Remove ELECTRON_MCP_RUNTIME=node to let the launcher use oam\.$/m);
       assert.doesNotMatch(run.stderr, /make this fatal/);
     },
   );
@@ -580,6 +721,33 @@ describe("launcher with no usable oam", () => {
     assert.equal(run.stdout.trim(), "", "nothing may be served");
     assert.match(run.stderr, /no Node was found on PATH/);
   });
+
+  it(
+    "under ELECTRON_MCP_SANDBOX=1, a fatal exit never claims the server runs without the sandbox",
+    { skip },
+    async () => {
+      // The "runs WITHOUT --permission" line is printed only once a path is
+      // committed to serving. Two ways to reach an exit that served nothing:
+      // a below-floor oam host with no Node on PATH, under auto and under
+      // ELECTRON_MCP_RUNTIME=node.
+      const empty = isolated();
+      const noNode = mkdtempSync(join(tmpdir(), "electron-mcp-launcher-nopath-"));
+      const envs: Record<string, string>[] = [{}, { ELECTRON_MCP_RUNTIME: "node" }];
+      for (const extraEnv of envs) {
+        const run = await runLauncher("0.9.0", {
+          ...empty,
+          ...extraEnv,
+          PATH: noNode,
+          OAM_BIN: join(noNode, "oam.exe"),
+          ELECTRON_MCP_SANDBOX: "1",
+        });
+        assert.equal(run.code, 1, JSON.stringify(run));
+        assert.equal(run.stdout.trim(), "", "nothing may be served");
+        assert.match(run.stderr, /no Node was found on PATH/);
+        assert.doesNotMatch(run.stderr, /runs WITHOUT --permission/, JSON.stringify(extraEnv));
+      }
+    },
+  );
 
   it("hands ELECTRON_MCP_RUNTIME=node off to Node even on a supported oam host", { skip }, async () => {
     const run = await runLauncher("0.15.2", isolated({ ELECTRON_MCP_RUNTIME: "node" }));
