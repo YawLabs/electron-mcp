@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.6.2] — 2026-09-15
+
 ### Fixed
 - **The MCP SDK devDependency moves from `^1.29.0` to `^1.30.0`, and `npm audit` goes from 7 findings (3 high) to 0.** Every advisory arrived transitively through the SDK: `fast-uri` 3.1.2 -> 3.1.7, `hono` 4.12.26 -> 4.13.7, `@hono/node-server` 1.19.13 -> 1.19.17, `ip-address` 10.2.0 -> 10.7.0 (`express-rate-limit`, flagged only through it, stays at 8.3.2 and clears), `qs` 6.15.2 -> 6.16.0, and `body-parser` 2.2.2 -> 2.3.0; the existing `overrides` floors are raised to each advisory's first patched version so a lockfile refresh cannot slide back into the advised ranges. Only `fast-uri` (via `ajv`, the SDK's default JSON Schema validator) is inlined into the published `dist/index.js`, and the 1.6.1 bundle carried 3.1.2, inside the advised range of its host-confusion and SSRF advisories, so this reaches `npx` users only through a release; the other packages are not in the bundle. README and CLAUDE.md claimed the bundle ships none of these devDependencies; they now say which one it does, and CLAUDE.md records that `release.sh` never reinstalls, so `npm ci` must precede a release of a dependency fix.
 
