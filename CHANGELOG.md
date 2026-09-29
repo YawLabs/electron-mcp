@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 - `release.sh` asks npm whether the version exists by reading its per-version document (`registry.npmjs.org/@yawlabs%2Felectron-mcp/<version>`, served uncached) instead of `npm view`, whose packument Cloudflare caches for up to 5 minutes. A re-run right after a failed later step could miss the version, publish again, and die on npm's E403 "cannot publish over the previously published versions" with a misleading token message; that E403 now counts as already published. The MCP Registry publish is tried up to four times (three retries, 30/60/90 s apart) when the registry says it cannot see the version on npm yet, calls the failure transient, or answers HTTP 429, 502, 503 or 504 itself (with a fresh registry login before each retry), and a duplicate version counts as done. Release tooling only; the published package is unchanged.
 
+### Documentation
+- **The README's Add to Yaw MCP button now sits directly under the title, and the follow badge links to @YawLabs.** The one-click install button and its one-line caption moved up from further down the page, so they are the first thing under the name on npm and GitHub, and the X badge at the bottom points at [@YawLabs](https://x.com/YawLabs) instead of @TokenLimitNews. npm shows the README from the published package, which is why it takes a release to carry this there; the package's code is unchanged from 1.6.2.
+
 ## [1.6.2] — 2026-09-15
 
 ### Fixed
