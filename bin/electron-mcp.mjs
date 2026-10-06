@@ -97,10 +97,12 @@
  * `process.env` reads (the env leg has to be static, since a denied env read
  * does not throw), and src/sandbox.test.ts, wherever a real oam at the floor is
  * installed, calls every tool under bare `--permission` and diffs the results
- * against a plain Node run. Verified by hand as well against oam 0.15.2:
+ * against a plain Node run. Verified by hand as well against oam 0.18.0,
+ * through this launcher's own spawn (`--permission run` on the child argv):
  * `--version`, `initialize`, `tools/list` and every tool answer exactly as
- * they do on Node, while a one-line `readFileSync` under the same flag -- and
- * through this launcher's own spawn -- is refused with ERR_ACCESS_DENIED.
+ * they do on Node, while a one-line `readFileSync` under the same flag is
+ * refused with ERR_ACCESS_DENIED. (That refusal reached through the launcher's
+ * spawn, not just `oam --permission -e`, was measured on oam 0.15.2.)
  *
  * So the value is entirely in what stays denied: a capability this server
  * merely happens not to use today becomes a runtime refusal. It is opt-in
@@ -131,7 +133,7 @@
  * sandboxed oam served it.
  *
  * MINIMUM OAM VERSION
- * The latest oam release, 0.15.2 -- bump OAM_MIN when oam ships a newer one.
+ * The latest oam release, 0.18.0 -- bump OAM_MIN when oam ships a newer one.
  * Only the current oam is used and verified; an older one is handed off or
  * falls back to Node. Below 0.9.0 `child_process.execFile` ran its arguments
  * through a SHELL, `exec` accepted `timeout` and ignored it, `spawnSync`
@@ -170,7 +172,7 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Oldest oam this launcher will run on. See MINIMUM OAM VERSION above. */
-const OAM_MIN = [0, 15, 2];
+const OAM_MIN = [0, 18, 0];
 
 /**
  * Bound on each `oam --version` probe. A healthy oam answers in milliseconds;
@@ -729,7 +731,7 @@ async function noteSandboxNotApplied(why) {
  */
 async function fallBack(hostOam, why) {
   // "fresh" is the word that makes this line make sense on a host that IS an
-  // oam at the floor: it just said "using this oam 0.15.2 process", and only a
+  // oam at the floor: it just said "using this oam 0.18.0 process", and only a
   // freshly spawned oam can apply a process-level flag.
   const sandboxWhy = `a fresh oam (${OAM_MIN.join(".")} or newer) is needed to apply it and none could be spawned`;
   if (fallbackInProcess(hostOam)) {
