@@ -91,7 +91,7 @@ Use the same JSON block shown above in any of these.
 
 ## Runtime and sandbox
 
-The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.15.2 or newer) is installed, and falls back to the Node that is already running it. Nothing to configure; both serve the same server.
+The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.18.0 or newer) is installed, and falls back to the Node that is already running it. Nothing to configure; both serve the same server.
 
 **Opt-in sandbox.** With oam, the server can run under `--permission` with no grants at all: no filesystem, no child processes, no network, no environment. This server needs none of them (every tool computes over its arguments and returns markdown), so the sandbox costs no capability and turns anything the server merely happens not to use into a runtime refusal. Add an `env` block to whichever config block you used above (`npx` on macOS / Linux / WSL, `cmd /c npx` on Windows):
 
@@ -99,7 +99,7 @@ The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.
 "env": { "ELECTRON_MCP_SANDBOX": "1", "ELECTRON_MCP_RUNTIME": "oam" }
 ```
 
-The second variable is what makes the sandbox **required**: it needs a freshly spawned oam (0.15.2 or newer) to apply it, and with `ELECTRON_MCP_RUNTIME=oam` a missing or unusable oam is a startup error instead of an unsandboxed server. Under the default `ELECTRON_MCP_RUNTIME=auto` the launcher still serves in that case, **without** `--permission`, and prints a line on stderr saying so and how to fix it. Use `auto` when you want the sandbox where available; use `oam` when you want to be sure.
+The second variable is what makes the sandbox **required**: it needs a freshly spawned oam (0.18.0 or newer) to apply it, and with `ELECTRON_MCP_RUNTIME=oam` a missing or unusable oam is a startup error instead of an unsandboxed server. Under the default `ELECTRON_MCP_RUNTIME=auto` the launcher still serves in that case, **without** `--permission`, and prints a line on stderr saying so and how to fix it. Use `auto` when you want the sandbox where available; use `oam` when you want to be sure.
 
 How to tell it took: every path that serves without the sandbox after it was asked for prints an `electron-mcp:` line on stderr containing `runs WITHOUT --permission`, plus how to fix it (most MCP clients show server stderr in their logs). When the sandbox is applied there is no such line. To confirm from a shell:
 
