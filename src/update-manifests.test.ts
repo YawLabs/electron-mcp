@@ -124,6 +124,48 @@ describe("update-manifests renderFormula", () => {
     assert.match(lines[2], /^ {2}homepage "/);
   });
 
+  it("escapes the urls and sha256s, which carry the --version tag and downloaded sidecar text", () => {
+    const hostileVersion = '1.0.0"#{system("id")}';
+    const hostileSha = '00"\nend\nclass Evil < Formula\n#{`id`}';
+    const formula = mod.renderFormula(mod.deriveMeta(hostilePkg, hostileVersion), () => hostileSha);
+    const urls = formula.split("\n").filter((l) => /^ +url "/.test(l));
+    const shas = formula.split("\n").filter((l) => /^ +sha256 "/.test(l));
+    assert.equal(urls.length, 3);
+    assert.equal(shas.length, 3);
+    for (const l of urls) {
+      const body = l
+        .trim()
+        .replace(/^url "/, "")
+        .replace(/", using: :nounzip$/, "");
+      assert.match(parseRubyDq(body), /\/releases\/download\/v1\.0\.0"#\{system\("id"\)\}\//);
+    }
+    for (const l of shas)
+      assert.equal(
+        parseRubyDq(
+          l
+            .trim()
+            .replace(/^sha256 "/, "")
+            .replace(/"$/, ""),
+        ),
+        hostileSha,
+      );
+    assert.doesNotMatch(formula, /^class Evil/m);
+  });
+
+  it("escapes the command name in bin.install and the test block", () => {
+    const meta = { ...mod.deriveMeta(hostilePkg, "1.0.0"), cmd: 'electron"#{x}' };
+    const formula = mod.renderFormula(meta, fakeHash);
+    assert.ok(formula.includes('bin.install Dir["*"].first => "electron\\"\\#{x}"'));
+    assert.ok(formula.includes('shell_output("#{bin}/electron\\"\\#{x} --version")'));
+  });
+
+  for (const className of ["electronMcp", "2fa", "Foo.Bar", "Evil < Object; end; class X", ""]) {
+    it(`refuses ${JSON.stringify(className)} as a class name`, () => {
+      const meta = { ...mod.deriveMeta(hostilePkg, "1.0.0"), className };
+      assert.throws(() => mod.renderFormula(meta, fakeHash), /class name/);
+    });
+  }
+
   it("renders the real package.json with no escaping needed", () => {
     const pkg = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf-8")) as Record<string, unknown>;
     const formula = mod.renderFormula(mod.deriveMeta(pkg, String(pkg.version)), fakeHash);
