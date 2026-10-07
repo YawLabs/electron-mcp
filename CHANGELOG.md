@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.6.5] — 2026-10-07
+
 ### Fixed
 - `scripts/update-manifests.mjs` now also runs the formula's `url`, `sha256` and command-name strings through `rubyString()`. 1.6.4 escaped only the package.json values, but a `url` carries the `--version` argument (through the release tag) and a `sha256` is the text of a downloaded `.sha256` sidecar, so either could still put a raw `"` or `#{...}` into the formula. The class name, a Ruby constant that cannot be escaped, must now be a plain CamelCase word. Release tooling only; the server itself is unchanged.
 
