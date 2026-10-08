@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { knowledgeFooter } from "./knowledge.js";
 import { buildTools } from "./tools/build.js";
 import { ipcTools } from "./tools/ipc.js";
@@ -49,10 +50,15 @@ const allTools = [
 // re-enable the footer on the one tool that must opt out.
 const FOOTER_EXEMPT = new Set([KNOWLEDGE_VERSION_TOOL_NAME]);
 
-const server = new McpServer({
-  name: "@yawlabs/electron-mcp",
-  version,
-});
+const server = new McpServer(
+  {
+    name: "@yawlabs/electron-mcp",
+    version,
+  },
+  // Routing guidance for the model, sent once in the initialize result. See
+  // src/instructions.ts for the size and character limits it keeps to.
+  { instructions: SERVER_INSTRUCTIONS },
+);
 
 // Register all tools with annotations
 for (const tool of allTools) {

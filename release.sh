@@ -347,6 +347,21 @@ if ! echo "$SANDBOX_TAP" | grep -q '^# skipped 0$'; then
 fi
 info "Sandbox differential ran against a real oam"
 
+# Is OAM_MIN still the latest oam release? (Ported from aws-mcp.) The policy is
+# one verified oam release at a time, and oam ships faster than this repo
+# releases, so the floor can be stale the moment upstream publishes. The DRIFT
+# half of this check (does the whole repo agree on the floor?) needs no network
+# and runs in the test suite (src/oam-floor.test.ts), so the step above already
+# covers it.
+#
+# Exits non-zero when the floor is behind; ELECTRON_MCP_ALLOW_STALE_OAM=1 is the
+# deliberate way past it. A machine with no network is not a failure -- the
+# check says so and continues.
+if [ -f scripts/check-oam-floor.mjs ]; then
+  echo ""
+  node scripts/check-oam-floor.mjs || fail "oam floor check failed -- see above. Set ELECTRON_MCP_ALLOW_STALE_OAM=1 to release on the old floor deliberately."
+fi
+
 # =============================================================================
 # Step 3: Bump version
 # =============================================================================

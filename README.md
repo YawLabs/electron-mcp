@@ -112,7 +112,7 @@ The version on stdout, exit 0, and no `WITHOUT --permission` line means a sandbo
 It is off by default because it is a behaviour change: a future version that legitimately needs a capability should fail in review, not in your session. Two more things to know:
 
 - If the launcher itself is already running under oam (Yaw MCP does this), the sandbox spawns a second oam (the host's own binary, if nothing newer is installed), because only a fresh one can apply a process-level flag. That adds one runtime boot to startup, plus a `--version` probe per oam binary the launcher finds.
-- Request the sandbox through the variable, not by putting `--permission` on the host command: a launcher running under `--permission` cannot read its environment, so every `ELECTRON_MCP_*` setting would be ignored. (The direct, no-launcher form is `oam --permission run <path>/dist/index.js`.)
+- Request the sandbox through the variable, not by putting `--permission` on the host command: a launcher running under bare `--permission` cannot read its environment, so every `ELECTRON_MCP_*` setting would be ignored. A host that also grants `--allow-env` (with `--allow-child-process`) does let them through; then a handoff to Node (`ELECTRON_MCP_RUNTIME=node`, or a host oam below the floor) runs `node --permission` with no grants, because oam 0.18 otherwise copies the host's `--permission` / `--allow-*` flags into Node's `NODE_OPTIONS` and Node refuses oam-only ones such as `--allow-env=` (exit 9, nothing served); the launcher prints one `electron-mcp:` line saying so. (The direct, no-launcher form is `oam --permission run <path>/dist/index.js`.)
 
 | Variable | Effect |
 |---|---|
@@ -121,6 +121,7 @@ It is off by default because it is a behaviour change: a future version that leg
 | `ELECTRON_MCP_RUNTIME=node` | always Node (the sandbox is not applied, and the launcher says so) |
 | `ELECTRON_MCP_SANDBOX=1` | run oam under `--permission` with no grants; `true` / `yes` / `on` also enable it, `0` / `false` / `no` / `off` disable it |
 | `OAM_BIN=/path/to/oam` | use this oam when it is usable, before discovery |
+| `OAM_INSTALL_DIR=/dir` | oam's own install-target variable; when set, `<dir>/oam` is searched before the default install locations and `PATH` |
 
 Both values are case-insensitive and trimmed. A value the launcher does not recognise is never a silent no-op: it is treated as the default (`auto`; sandbox off) and named on stderr, so a typo cannot quietly turn "sandbox required" into "sandbox if convenient".
 

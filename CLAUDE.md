@@ -7,6 +7,7 @@ Electron.js MCP server — IPC scaffolding, security auditing, build diagnostics
 18 tools total, across seven tool modules plus three shared support modules.
 
 - `src/index.ts` — Entry point. Registers all tools with McpServer, appends the knowledge footer, handles version subcommand.
+- `src/instructions.ts` — The MCP `instructions` string (routing guidance, plain ASCII, under 2000 bytes; pinned by `src/instructions.test.ts`).
 - `src/version.ts` — Resolves the package version (esbuild `__VERSION__` define, with a tsc-path `package.json` fallback).
 - `src/knowledge.ts` — Single source of truth for the embedded-knowledge vintage (`KNOWLEDGE_VERSION`) and the `knowledgeFooter()` appended to tool output.
 - `src/static-analysis.ts` — Shared lexical-scrub utilities (`stripComments`, `stripCommentsAndStrings`, `unsafeOpenExternalCallSites`) used by the analysis tools so each inherits the same comment/string handling.
@@ -46,7 +47,7 @@ This MCP does NOT wrap a REST API. It is a development intelligence server:
 
 ## Launcher
 
-`bin/electron-mcp.mjs` is the npm `bin`. It prefers the newest usable oam runtime (floor `OAM_MIN`, the latest oam release) and otherwise serves in-process (on Node, or on a host oam at the floor) or, from an oam host below the floor, hands off to Node on `PATH`. Environment variables: `ELECTRON_MCP_RUNTIME` (`auto` | `oam` | `node`), `ELECTRON_MCP_SANDBOX=1` (spawn oam under bare `--permission`; opt-in, and never dropped silently: every path that serves without it says so on stderr), `OAM_BIN`. The header comment in the launcher is the design record. Tests: `src/launcher.test.ts` covers the pure decision functions by extracting their source and the wiring by running the real bin under a preloaded `process.versions.oam`; `src/bundle-surface.test.ts` pins the bundle's built-in imports and its zero `process.env` reads (the sandbox's static leg); `src/sandbox.test.ts` calls every tool under a real `oam --permission` and diffs against Node, skipping (loudly) where no oam at the floor is reachable via `OAM_BIN`, the installed locations, or `PATH` -- and `release.sh` refuses to release on that skip.
+`bin/electron-mcp.mjs` is the npm `bin`. It prefers the newest usable oam runtime (floor `OAM_MIN`, the latest oam release) and otherwise serves in-process (on Node, or on a host oam at the floor) or, from an oam host below the floor, hands off to Node on `PATH`. Environment variables: `ELECTRON_MCP_RUNTIME` (`auto` | `oam` | `node`), `ELECTRON_MCP_SANDBOX=1` (spawn oam under bare `--permission`; opt-in, and never dropped silently: every path that serves without it says so on stderr), `OAM_BIN`, `OAM_INSTALL_DIR` (searched first by discovery). The header comment in the launcher is the design record. Tests: `src/launcher.test.ts` covers the pure decision functions by extracting their source and the wiring by running the real bin under a preloaded `process.versions.oam`; `src/bundle-surface.test.ts` pins the bundle's built-in imports and its zero `process.env` reads (the sandbox's static leg); `src/sandbox.test.ts` calls every tool under a real `oam --permission` and diffs against Node, skipping (loudly) where no oam at the floor is reachable via `OAM_BIN`, the installed locations, or `PATH` -- and `release.sh` refuses to release on that skip.
 
 ## Release process
 
