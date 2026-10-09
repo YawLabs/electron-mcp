@@ -262,6 +262,129 @@ describe("launcher pickNewest()", () => {
 
 type LauncherRun = { stdout: string; stderr: string; code: number | null };
 
+describe("launcher stripPermissionFlags()", () => {
+  const stripPermissionFlags = new Function(
+    `${extract([/function stripPermissionFlags\(nodeOptions\) \{[\s\S]*?\n\}/])}\nreturn stripPermissionFlags;`,
+  )() as (value: string | undefined) => string | undefined;
+
+  it("removes --permission and every --allow-* token, keeping the rest in order", () => {
+    assert.equal(
+      stripPermissionFlags(
+        "--max-old-space-size=4096 --permission --allow-env=PATH --allow-fs-read=* --trace-warnings",
+      ),
+      "--max-old-space-size=4096 --trace-warnings",
+    );
+  });
+
+  it("returns undefined when nothing is left, or nothing was set", () => {
+    assert.equal(stripPermissionFlags("--permission --allow-child-process"), undefined);
+    assert.equal(stripPermissionFlags("   "), undefined);
+    assert.equal(stripPermissionFlags(undefined), undefined);
+  });
+});
+
+describe("launcher remedyFor()", () => {
+  type Findings = {
+    passedOver?: (number[] | null)[];
+    overrideMissing?: boolean;
+    failedToStart?: string | null;
+    shim?: string | null;
+  };
+  const remedyFor = new Function(
+    `${extract([OAM_MIN_DECL, /function remedyFor\([^)]*\) \{[\s\S]*?\n\}/])}\nreturn remedyFor;`,
+  )() as (findings: Findings, platform: string, arch: string) => string[];
+
+  it("sends an outdated oam to `oam self-update`, not to the website", () => {
+    const clauses = remedyFor({ passedOver: [[0, 17, 1]] }, "win32", "arm64");
+    assert.deepEqual(clauses, ["run `oam self-update` to get oam 0.18.0 or newer"]);
+  });
+
+  it("asks to check a binary that could not be run, rather than updating it", () => {
+    const clauses = remedyFor({ passedOver: [null] }, "darwin", "arm64");
+    assert.deepEqual(clauses, ["check that the oam found is an executable oam binary for this platform"]);
+  });
+
+  it("names each cause that was seen, and then never the website", () => {
+    const clauses = remedyFor({ passedOver: [[0, 9, 0], null], overrideMissing: true }, "linux", "x64");
+    assert.equal(clauses.length, 3, JSON.stringify(clauses));
+    assert.ok(
+      clauses.every((c) => !c.includes("oamjs.org")),
+      JSON.stringify(clauses),
+    );
+  });
+
+  it("points at a chosen oam that would not start", () => {
+    const clauses = remedyFor({ failedToStart: "/opt/oam/oam" }, "linux", "x64");
+    assert.deepEqual(clauses, ["check that the oam at /opt/oam/oam can be started, or set OAM_BIN=/path/to/oam"]);
+  });
+
+  it("sends someone with no oam at all to install one", () => {
+    assert.deepEqual(remedyFor({}, "win32", "x64"), [
+      "install oam (0.18.0 or newer) from https://oamjs.org, or set OAM_BIN=/path/to/oam",
+    ]);
+  });
+
+  it("never offers an install on a Linux that oam publishes no build for", () => {
+    const [clause] = remedyFor({}, "linux", "arm64");
+    assert.match(clause, /oam publishes no build for linux-arm64/);
+    assert.doesNotMatch(clause, /oamjs\.org/);
+  });
+
+  it("leaves a lone .cmd/.bat shim to its own note", () => {
+    assert.deepEqual(remedyFor({ shim: "C:/tools/oam.cmd" }, "win32", "x64"), []);
+  });
+});
+
+describe("launcher discoverOamPaths()", () => {
+  type FakeProcess = { env: Record<string, string | undefined> };
+  const discover = new Function(
+    "process",
+    "isWin",
+    "exe",
+    "existsSync",
+    "realpathSync",
+    "homedir",
+    "join",
+    "delimiter",
+    `${extract([/function pathKey\(p\) \{[\s\S]*?\n\}/, /function discoverOamPaths\(\) \{[\s\S]*?\n\}/])}\nreturn discoverOamPaths();`,
+  ) as (
+    proc: FakeProcess,
+    isWin: boolean,
+    exe: string,
+    existsSync: (p: string) => boolean,
+    realpathSync: (p: string) => string,
+    homedir: () => string,
+    join: (...parts: string[]) => string,
+    delimiter: string,
+  ) => string[];
+  const posixJoin = (...parts: string[]) => parts.join("/");
+  const run = (env: Record<string, string | undefined>) =>
+    discover(
+      { env },
+      false,
+      "oam",
+      () => true,
+      (p) => p,
+      () => "/home/u",
+      posixJoin,
+      ":",
+    );
+
+  it("searches OAM_INSTALL_DIR first when it is set: oam's own install target", () => {
+    assert.deepEqual(run({ OAM_INSTALL_DIR: "/opt/oam", PATH: "/usr/bin" }), [
+      "/opt/oam/oam",
+      "/home/u/.oam/bin/oam",
+      "/usr/bin/oam",
+    ]);
+  });
+
+  it("keeps the default order when OAM_INSTALL_DIR is unset or empty", () => {
+    for (const value of [undefined, ""]) {
+      assert.deepEqual(run({ OAM_INSTALL_DIR: value, PATH: "/usr/bin" }), ["/home/u/.oam/bin/oam", "/usr/bin/oam"]);
+    }
+  });
+});
+
 /**
  * The `--import` preload every spawned launcher runs with: the argv[1] exit
  * marker, the optional oam pose, and any test-specific source appended.
@@ -323,6 +446,43 @@ const RECORD_SPAWN_ARGS = [
 function recordedSpawnArgs(run: { stderr: string }): string[] | null {
   const line = run.stderr.split("\n").find((l) => l.startsWith("SPAWN_ARGS="));
   return line ? (JSON.parse(line.slice("SPAWN_ARGS=".length)) as string[]) : null;
+}
+
+/**
+ * Preload source that poses THIS launcher as an oam host running under
+ * `--permission` with grants: `--permission` on execArgv (where oam lists argv
+ * flags) and NODE_OPTIONS carrying oam-only grants, as 0.18's inheritance would
+ * leave them. Set in the preload, not the child's env, so the Node running the
+ * launcher never parses them itself.
+ */
+const POSE_PERMISSION_HOST = [
+  'Object.defineProperty(process, "execArgv", { value: [...process.execArgv, "--permission"] });',
+  'process.env.NODE_OPTIONS = "--allow-env=PATH --permission --allow-fs-read=* --max-old-space-size=4096";',
+].join("\n");
+
+/**
+ * Preload source that reports every spawn's argv (SPAWN_ARGS=) and the
+ * NODE_OPTIONS in its env (SPAWN_NODE_OPTIONS=, JSON, null when unset), and
+ * lets the spawn through.
+ */
+const RECORD_SPAWN_ENV = [
+  'import childProcess from "node:child_process";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  'import { writeSync as writeStderr } from "node:fs";',
+  "const realSpawn = childProcess.spawn;",
+  "childProcess.spawn = function (cmd, args, opts) {",
+  '  writeStderr(2, "SPAWN_ARGS=" + JSON.stringify(args) + "\\n");',
+  "  const nodeOptions = opts && opts.env ? opts.env.NODE_OPTIONS : undefined;",
+  '  writeStderr(2, "SPAWN_NODE_OPTIONS=" + JSON.stringify(nodeOptions ?? null) + "\\n");',
+  "  return realSpawn.call(this, cmd, args, opts);",
+  "};",
+  "syncBuiltinESMExports();",
+].join("\n");
+
+/** The NODE_OPTIONS of the first spawn a RECORD_SPAWN_ENV run reported. */
+function recordedSpawnNodeOptions(run: { stderr: string }): string | null | undefined {
+  const line = run.stderr.split("\n").find((l) => l.startsWith("SPAWN_NODE_OPTIONS="));
+  return line ? (JSON.parse(line.slice("SPAWN_NODE_OPTIONS=".length)) as string | null) : undefined;
 }
 
 /**
@@ -529,8 +689,10 @@ const IN_LAUNCHER_PROCESS = /LAUNCHER_ARGV1=.*dist[\\/]index\.js/;
 const IN_CHILD = /LAUNCHER_ARGV1=.*electron-mcp\.mjs/;
 const SANDBOX_DROPPED =
   /^electron-mcp: ELECTRON_MCP_SANDBOX=\S+ was not applied -- .*so the server runs WITHOUT --permission\.$/m;
+// The remedy follows what discovery saw (remedyFor). Every isolated() run with
+// a missing OAM_BIN sees exactly that and nothing else.
 const SANDBOX_REMEDY =
-  /^To apply it, install or update oam \(0\.18\.0 or newer\) from https:\/\/oamjs\.org or set OAM_BIN=\/path\/to\/oam; set ELECTRON_MCP_RUNTIME=oam to make this fatal instead\.$/m;
+  /^To apply it, point OAM_BIN at an existing oam binary, or unset it; set ELECTRON_MCP_RUNTIME=oam to make this fatal instead\.$/m;
 
 describe("launcher on an oam host", () => {
   it("control: on plain Node the launcher still discovers and spawns", { skip }, async () => {
@@ -791,7 +953,7 @@ describe("launcher with no usable oam", () => {
       // would drop the sandbox the user just asked for without saying so.
       assert.match(
         run.stderr,
-        /or drop ELECTRON_MCP_SANDBOX=\S+ and use ELECTRON_MCP_RUNTIME=node \(Node cannot apply the sandbox\)\./,
+        /^Or drop ELECTRON_MCP_SANDBOX=\S+ and use ELECTRON_MCP_RUNTIME=node \(Node cannot apply the sandbox\)\.$/m,
       );
       // Fatal is fatal: nothing may claim the server runs without the sandbox.
       assert.doesNotMatch(run.stderr, /runs WITHOUT --permission/);
@@ -808,7 +970,11 @@ describe("launcher with no usable oam", () => {
         run.stderr,
         /^electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.18\.0 or newer\) was found\.$/m,
       );
-      assert.match(run.stderr, /, or use ELECTRON_MCP_RUNTIME=node\.$/m);
+      assert.match(run.stderr, /^Or use ELECTRON_MCP_RUNTIME=node\.$/m);
+      // The remedy names the cause that was seen -- a missing OAM_BIN -- and
+      // does not send anyone to the website when something was configured.
+      assert.match(run.stderr, /^Point OAM_BIN at an existing oam binary, or unset it\.$/m);
+      assert.doesNotMatch(run.stderr, /oamjs\.org/);
       assert.doesNotMatch(run.stderr, /SANDBOX/);
     },
   );
@@ -918,6 +1084,83 @@ describe("launcher with no usable oam", () => {
       assert.equal(session.exitedOnItsOwn, false, JSON.stringify(session));
       assert.match(session.stderr, /failed to launch oam at .*; using this oam 0\.18\.0 process instead\./);
       assert.match(session.stderr, SANDBOX_DROPPED);
+    },
+  );
+});
+
+describe("launcher Node handoff from an oam host under --permission", () => {
+  // oam 0.18 appends a --permission host's flags to a child's NODE_OPTIONS
+  // unless the child's argv holds --permission, and Node exits 9 on oam-only
+  // ones such as --allow-env= (measured on oam 0.18.0 / Node 22.22.2). Node's
+  // --permission is stable from 22.13; an older Node cannot serve this way, so
+  // the serving half is asserted only where the suite's Node has it.
+  const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+  const nodeHasPermission = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13);
+
+  it("puts --permission before the entry on Node's argv and strips the inherited flags", { skip }, async () => {
+    const run = await runLauncher(
+      "0.18.0",
+      isolated({ ELECTRON_MCP_RUNTIME: "node" }),
+      `${POSE_PERMISSION_HOST}\n${RECORD_SPAWN_ENV}`,
+    );
+    const args = recordedSpawnArgs(run);
+    assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+    assert.equal(args[0], "--permission", JSON.stringify(args));
+    assert.match(args[1], /dist[\\/]index\.js$/, JSON.stringify(args));
+    assert.equal(recordedSpawnNodeOptions(run), "--max-old-space-size=4096");
+    assert.match(
+      run.stderr,
+      /^electron-mcp: this oam 0\.18\.0 process runs under --permission, so Node runs the server under --permission too \(no grants\)\.$/m,
+    );
+    // Served under a permission model, so the "WITHOUT --permission" line
+    // would be false here.
+    assert.doesNotMatch(run.stderr, /runs WITHOUT --permission/);
+    if (nodeHasPermission) {
+      assert.equal(run.code, 0, JSON.stringify(run));
+      assert.equal(run.stdout.trim(), PACKAGE_VERSION);
+    }
+  });
+
+  it("adds no --permission when the host is not under it, but still strips NODE_OPTIONS", { skip }, async () => {
+    const run = await runLauncher(
+      "0.18.0",
+      isolated({ ELECTRON_MCP_RUNTIME: "node" }),
+      `process.env.NODE_OPTIONS = "--allow-net=example.com --max-old-space-size=4096";\n${RECORD_SPAWN_ENV}`,
+    );
+    const args = recordedSpawnArgs(run);
+    assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+    assert.match(args[0], /dist[\\/]index\.js$/, JSON.stringify(args));
+    assert.equal(recordedSpawnNodeOptions(run), "--max-old-space-size=4096");
+    assert.doesNotMatch(run.stderr, /runs under --permission/);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout.trim(), PACKAGE_VERSION);
+  });
+
+  it("strips inherited grants from the sandboxed oam spawn, so bare --permission stays bare", { skip }, async () => {
+    const run = await runLauncher(
+      "0.18.0",
+      { ELECTRON_MCP_SANDBOX: "1" },
+      `${POSE_PERMISSION_HOST}\n${RECORD_SPAWN_ENV}`,
+    );
+    const args = recordedSpawnArgs(run);
+    assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+    assert.deepEqual(args.slice(0, 2), ["--permission", "run"], JSON.stringify(args));
+    assert.equal(recordedSpawnNodeOptions(run), "--max-old-space-size=4096");
+  });
+
+  it(
+    "leaves NODE_OPTIONS alone on a plain oam spawn, which inherits the host's grants by design",
+    { skip },
+    async () => {
+      const run = await runLauncher(
+        "0.9.0",
+        {},
+        `process.env.NODE_OPTIONS = "--allow-fs-read=* --max-old-space-size=4096";\n${RECORD_SPAWN_ENV}`,
+      );
+      const args = recordedSpawnArgs(run);
+      assert.ok(args, `no spawn was recorded: ${JSON.stringify(run)}`);
+      assert.equal(args[0], "run", JSON.stringify(args));
+      assert.equal(recordedSpawnNodeOptions(run), "--allow-fs-read=* --max-old-space-size=4096");
     },
   );
 });

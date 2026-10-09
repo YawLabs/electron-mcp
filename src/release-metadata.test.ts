@@ -65,6 +65,26 @@ describe("release metadata", () => {
     );
     assert.equal(pkg.mcpName, server.name, "package.json mcpName must equal server.json name");
   });
+
+  // The MCP Registry schema caps `description` at 100 code points and
+  // constrains `name`; release.sh publishes to the registry only AFTER npm,
+  // so an over-long description fails a release half-way through. The same
+  // limits yaw-mcp's release.sh pre-flight enforces, checked here instead so
+  // every `npm test` (and therefore release.sh's test step) catches them.
+  it("server.json description is 1..100 code points", () => {
+    const server = readJson("server.json");
+    assert.equal(typeof server.description, "string", "server.json must declare a string `description`");
+    const length = [...(server.description as string)].length;
+    assert.ok(
+      length >= 1 && length <= 100,
+      `server.json description is ${length} code points; the MCP Registry allows 1..100`,
+    );
+  });
+
+  it("server.json name matches the io.github namespace pattern", () => {
+    const server = readJson("server.json");
+    assert.match(String(server.name), /^io\.github\.[A-Za-z0-9-]+\/[a-z0-9-]+$/);
+  });
 });
 
 describe("release.sh MCP Registry calls", () => {

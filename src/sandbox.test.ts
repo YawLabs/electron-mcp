@@ -71,6 +71,8 @@ function findUsableOam(): { path: string; version: number[] } | null {
   if (process.platform === "win32") {
     installed.unshift(join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "oam", "bin", exe));
   }
+  // The launcher searches oam's own install target first (discoverOamPaths).
+  if (process.env.OAM_INSTALL_DIR) installed.unshift(join(process.env.OAM_INSTALL_DIR, exe));
   const candidates = [
     ...(process.env.OAM_BIN ? [process.env.OAM_BIN] : []),
     ...installed,

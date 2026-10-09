@@ -116,11 +116,25 @@
  * server.
  *
  * Request the sandbox through the environment variable, not by putting
- * `--permission` on the HOST command (`oam --permission run <this file>`):
- * under that host every process.env read is empty, so ELECTRON_MCP_SANDBOX,
- * ELECTRON_MCP_RUNTIME and OAM_BIN are all inert. The outcome is still safe --
- * the host's own sandbox covers the in-process server -- but nothing this
- * launcher is told applies.
+ * `--permission` on the HOST command (`oam --permission run <this file>`).
+ * Under a BARE `--permission` host every process.env read is empty, so
+ * ELECTRON_MCP_SANDBOX, ELECTRON_MCP_RUNTIME and OAM_BIN are all inert; the
+ * outcome is still safe -- the host's own sandbox covers the in-process
+ * server -- but nothing this launcher is told applies. A host that also
+ * grants `--allow-env` (and `--allow-child-process`, `--allow-fs-read`) does
+ * let these settings through, and then a handoff meets oam 0.18's
+ * NODE_OPTIONS inheritance: a child started under `--permission` gets the
+ * host's `--permission` / `--allow-*` flags appended to its NODE_OPTIONS
+ * unless its own argv holds `--permission`, and Node refuses oam-only flags
+ * such as `--allow-env=` there (measured on oam 0.18.0 / Node 22: exit 9,
+ * nothing served). So a Node handoff from such a host carries `--permission`
+ * on Node's own argv (Node's permission model, no grants, which this server
+ * needs none of -- measured: `node --permission dist/index.js` answers
+ * `initialize` and a `tools/call`) and says so on stderr; and every Node
+ * child, plus the sandboxed oam spawn, gets an env copy whose NODE_OPTIONS
+ * has the inherited `--permission` / `--allow-*` tokens removed (see
+ * childEnvWithoutPermissionFlags). A plain, unsandboxed oam spawn keeps
+ * NODE_OPTIONS as it is, so it still inherits the host's grants.
  *
  * When the sandbox IS applied the launcher prints no line about it (it may
  * still mention an unusable OAM_BIN it passed over). Every path that serves
@@ -157,6 +171,8 @@
  *                               applied under ELECTRON_MCP_RUNTIME=node, and
  *                               the launcher says so
  *   OAM_BIN=/path/to/oam        use this oam when it is usable, before discovery
+ *   OAM_INSTALL_DIR=/dir        oam's install target; <dir>/oam is searched
+ *                               first by discovery
  * Both values are case-insensitive and trimmed. A runtime value other than
  * auto / oam / node is treated as auto and named on stderr. A sandbox value of
  * 1 / true / yes / on enables it, 0 / false / no / off (or unset) disables it,
@@ -209,6 +225,11 @@ function pathKey(p) {
  * installer defaults to %LOCALAPPDATA%\oam\bin there, but oam's docs name
  * ~/.oam/bin first and OAM_INSTALL_DIR can pick either.
  *
+ * OAM_INSTALL_DIR, when set, is searched FIRST: it is the installer's target
+ * directory itself (oam docs/cli-reference.md -- `$OAM_INSTALL_DIR/oam`, no
+ * `bin` appended), and `oam self-update` updates an oam there in place, so an
+ * oam installed to a custom directory and not on PATH is still found.
+ *
  * Windows: `.exe` ONLY -- deliberately narrower than PATHEXT. Node refuses to
  * run a .cmd/.bat through execFile/spawn without `shell: true` (EINVAL, and for
  * spawn it throws SYNCHRONOUSLY rather than emitting 'error'), so walking the
@@ -221,6 +242,7 @@ function discoverOamPaths() {
   if (isWin) {
     installed.unshift(join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "oam", "bin", exe));
   }
+  if (process.env.OAM_INSTALL_DIR) installed.unshift(join(process.env.OAM_INSTALL_DIR, exe));
   const onPath = (process.env.PATH ?? "")
     .split(delimiter)
     .filter(Boolean)
@@ -388,6 +410,54 @@ function sandboxFlags(setting) {
 }
 
 /**
+ * NODE_OPTIONS with every `--permission` / `--allow-*` token removed, or
+ * undefined when nothing is left. oam 0.18.0 appends a `--permission` host's
+ * permission flags to a child's NODE_OPTIONS (see THE `--permission` SANDBOX),
+ * and the value can also arrive already carrying them from a grandparent. Node
+ * exits 9 on oam-only spellings there (`--allow-env=`, `--allow-net=`), and a
+ * sandboxed oam child would read inherited grants back out of it -- measured on
+ * oam 0.18.0: `NODE_OPTIONS="--permission --allow-fs-read=*" oam --permission`
+ * reads the filesystem. Space-separated tokens, as oam and Node write them.
+ *
+ * Pure on purpose, like runtimePlan.
+ */
+function stripPermissionFlags(nodeOptions) {
+  if (nodeOptions === undefined) return undefined;
+  const kept = `${nodeOptions}`
+    .split(/\s+/)
+    .filter((token) => token !== "" && token !== "--permission" && !token.startsWith("--allow-"));
+  return kept.length > 0 ? kept.join(" ") : undefined;
+}
+
+/**
+ * Whether THIS process is an oam running under its permission model: the flag
+ * on its own argv (process.execArgv), or inherited through NODE_OPTIONS, which
+ * oam 0.18 reads but does not list in execArgv. oam has no
+ * `process.permission`. On Node it is always false -- a Node host's own
+ * `--permission` is Node's business, and Node does not append to NODE_OPTIONS
+ * an oam flag Node would then refuse.
+ */
+function hostUnderPermission() {
+  if (process.versions.oam === undefined) return false;
+  if ((process.execArgv ?? []).includes("--permission")) return true;
+  return `${process.env.NODE_OPTIONS ?? ""}`.split(/\s+/).includes("--permission");
+}
+
+/**
+ * A copy of process.env whose NODE_OPTIONS has the permission flags removed
+ * (see stripPermissionFlags). Used for every Node child and for the sandboxed
+ * oam spawn, whose own argv carries the only `--permission` it should have.
+ * Never for a plain oam spawn, which inherits the host's grants by design.
+ */
+function childEnvWithoutPermissionFlags() {
+  const env = { ...process.env };
+  const stripped = stripPermissionFlags(env.NODE_OPTIONS);
+  if (stripped === undefined) delete env.NODE_OPTIONS;
+  else env.NODE_OPTIONS = stripped;
+  return env;
+}
+
+/**
  * Write a diagnostic to stderr synchronously, so a following process.exit
  * cannot truncate it.
  *
@@ -441,12 +511,61 @@ function findNodeOnPath() {
   return null;
 }
 
-/** Why a candidate was passed over, for stderr. */
+/**
+ * Why a candidate was passed over, for stderr.
+ *
+ * Two different causes, and they need different remedies. A null `version` is
+ * NOT "old": oamVersion returns null when the binary could not be run at all
+ * (not executable, wrong arch, wedged, deleted between the stat and the probe)
+ * or when its --version output did not parse. Telling that user to
+ * `oam self-update` sends them after the one cause it definitely is not, so the
+ * wording splits here, and so does the remedy in `remedyFor`.
+ */
 function unusableReason(path, version, label = path) {
   const min = OAM_MIN.join(".");
   return version
     ? `${label} is oam ${version.join(".")}, older than ${min}`
     : `${label} could not be run, or did not report a version this launcher understands`;
+}
+
+/**
+ * What would get a usable oam, one clause per cause that was actually seen
+ * (ported from ssh-mcp's remedyFor). Lower-case clauses with no final
+ * punctuation, so the caller can print them as lines or splice them into a
+ * sentence:
+ *   passedOver     the `version` of every existing binary rejected (OAM_BIN
+ *                  included): a readable one is outdated -> `oam self-update`;
+ *                  a null one could not be run -> check the binary
+ *   overrideMissing  OAM_BIN names a path that does not exist
+ *   failedToStart  the path of a chosen oam whose spawn failed
+ *   shim           an oam.cmd/.bat was found (its own note names the remedy)
+ * Only when nothing was found at all is installing from oamjs.org the advice
+ * -- and not even then on a Linux that is not x64: oam publishes darwin
+ * arm64/x64, windows arm64/x64 and linux x64 (checked against the v0.18.0
+ * release assets), so on an arm64 Linux box "install" is an impossible remedy.
+ *
+ * Pure on purpose, like runtimePlan: platform and arch are parameters.
+ */
+function remedyFor({ passedOver = [], overrideMissing = false, failedToStart = null, shim = null }, platform, arch) {
+  const min = OAM_MIN.join(".");
+  const clauses = [];
+  if (failedToStart) clauses.push(`check that the oam at ${failedToStart} can be started, or set OAM_BIN=/path/to/oam`);
+  if (passedOver.some((v) => v !== null)) clauses.push(`run \`oam self-update\` to get oam ${min} or newer`);
+  if (passedOver.some((v) => v === null)) clauses.push("check that the oam found is an executable oam binary for this platform");
+  if (overrideMissing) clauses.push("point OAM_BIN at an existing oam binary, or unset it");
+  if (clauses.length === 0 && !shim) {
+    clauses.push(
+      platform === "linux" && arch !== "x64"
+        ? `oam publishes no build for linux-${arch}, so there is nothing to install here; set OAM_BIN=/path/to/oam if you built one yourself`
+        : `install oam (${min} or newer) from https://oamjs.org, or set OAM_BIN=/path/to/oam`,
+    );
+  }
+  return clauses;
+}
+
+/** "run x" -> "Run x." for a remedy printed as its own line. */
+function remedyLine(clause) {
+  return `${clause[0].toUpperCase()}${clause.slice(1)}.\n`;
 }
 
 /**
@@ -477,18 +596,25 @@ function hostOamCandidate() {
  * among the host's own oam (first, so it wins ties) and discovery. Returns the
  * choice (or null) plus stderr notes: `overrideNote` about an unusable
  * OAM_BIN, and `skipped` describing what was found and rejected when nothing
- * was usable.
+ * was usable. `passedOver` (the version of every existing binary rejected,
+ * OAM_BIN included, when none was chosen) and `overrideMissing` feed remedyFor.
  */
 function chooseOam() {
   const override = process.env.OAM_BIN;
   let overrideNote = null;
+  let overrideMissing = false;
+  const passedOver = [];
   if (override) {
     if (!existsSync(override)) {
       overrideNote = `OAM_BIN=${override} does not exist`;
+      overrideMissing = true;
     } else {
       const version = oamVersion(override);
-      if (atLeast(version, OAM_MIN)) return { chosen: { path: override, version }, overrideNote, skipped: [] };
+      if (atLeast(version, OAM_MIN)) {
+        return { chosen: { path: override, version }, overrideNote, skipped: [], passedOver, overrideMissing };
+      }
       overrideNote = unusableReason(override, version, `OAM_BIN=${override}`);
+      passedOver.push(version);
     }
   }
   const host = hostOamCandidate();
@@ -501,8 +627,16 @@ function chooseOam() {
   ];
   const chosen = pickNewest(candidates);
   const skipped = chosen ? [] : candidates.map((c) => unusableReason(c.path, c.version));
-  return { chosen, overrideNote, skipped };
+  if (!chosen) passedOver.push(...candidates.map((c) => c.version));
+  return { chosen, overrideNote, skipped, passedOver, overrideMissing };
 }
+
+/**
+ * What discovery saw, for the remedy in noteSandboxNotApplied: set once
+ * chooseOam has run (and `failedToStart` once a chosen oam would not spawn).
+ * Empty when no discovery ran -- then nothing is known about an installed oam.
+ */
+const oamFindings = { passedOver: [], overrideMissing: false, failedToStart: null, shim: null };
 
 /** Run the server in THIS process. The zero-overhead fallback. */
 async function runInProcess() {
@@ -536,9 +670,10 @@ const startFailed = (e) => {
  *
  * `onLaunchFailed(err)` runs when the child could not be started at all; it is
  * never called once the child is running, which would double-start the server
- * on the same stdio.
+ * on the same stdio. `env` defaults to process.env; a Node child and the
+ * sandboxed oam spawn pass childEnvWithoutPermissionFlags().
  */
-async function launchChild(cmd, args, onLaunchFailed) {
+async function launchChild(cmd, args, onLaunchFailed, env = process.env) {
   // Every handoff from an oam host pipes; see ALREADY RUNNING ON OAM. That is a
   // host below the floor, one at the floor spawning a fresh oam for the
   // sandbox, or any oam under ELECTRON_MCP_RUNTIME=node. A below-floor oam's
@@ -553,7 +688,7 @@ async function launchChild(cmd, args, onLaunchFailed) {
       // server's shutdown path. Piping preserves both as well: bytes are copied
       // unchanged, and stdin's end propagates to the child.
       stdio: piped ? ["pipe", "pipe", "pipe"] : "inherit",
-      env: process.env,
+      env,
       windowsHide: true,
     });
   } catch (err) {
@@ -681,11 +816,28 @@ async function handOffToNode(reason, sandboxWhy) {
     process.exit(1);
   }
   if (reason) await errSync(`electron-mcp: ${reason}; running on ${node} instead.\n`);
-  await noteSandboxNotApplied(sandboxWhy);
-  await launchChild(node, [SERVER_ENTRY, ...process.argv.slice(2)], async (err) => {
-    await errSync(`electron-mcp: failed to launch Node at ${node} (${err?.message ?? err})\n`);
-    process.exit(1);
-  });
+  // Under a `--permission` host, Node's argv must hold `--permission` itself:
+  // that is the one thing that stops oam 0.18 appending the host's flags to
+  // Node's NODE_OPTIONS, where Node refuses oam-only ones and exits 9 having
+  // served nothing. It also keeps the server under a permission model rather
+  // than dropping it on the handoff. No grants: the server needs none.
+  const nodePermission = hostUnderPermission();
+  if (nodePermission) {
+    await errSync(
+      `electron-mcp: this oam ${process.versions.oam} process runs under --permission, so Node runs the server under --permission too (no grants).\n`,
+    );
+  } else {
+    await noteSandboxNotApplied(sandboxWhy);
+  }
+  await launchChild(
+    node,
+    [...(nodePermission ? ["--permission"] : []), SERVER_ENTRY, ...process.argv.slice(2)],
+    async (err) => {
+      await errSync(`electron-mcp: failed to launch Node at ${node} (${err?.message ?? err})\n`);
+      process.exit(1);
+    },
+    childEnvWithoutPermissionFlags(),
+  );
 }
 
 /** What a fallback serves on, for stderr. */
@@ -714,11 +866,15 @@ function fallbackSuffix(hostOam) {
  */
 async function noteSandboxNotApplied(why) {
   if (sandbox.length === 0) return;
+  // The remedy follows what discovery actually saw (remedyFor): an outdated
+  // oam gets `oam self-update`, not a trip to the website. A lone .cmd/.bat
+  // shim yields no clause, since its own note already says what to do.
+  const clauses = remedyFor(oamFindings, process.platform, process.arch);
+  const how = clauses.length > 0 ? clauses.join("; ") : "install the native oam binary, or point OAM_BIN at one";
   const remedy =
     mode === "node"
       ? "Remove ELECTRON_MCP_RUNTIME=node to let the launcher use oam.\n"
-      : `To apply it, install or update oam (${OAM_MIN.join(".")} or newer) from https://oamjs.org or set ` +
-        "OAM_BIN=/path/to/oam; set ELECTRON_MCP_RUNTIME=oam to make this fatal instead.\n";
+      : `To apply it, ${how}; set ELECTRON_MCP_RUNTIME=oam to make this fatal instead.\n`;
   await errSync(
     `electron-mcp: ${sandboxAsSet} was not applied -- ${why}, so the server runs WITHOUT --permission.\n${remedy}`,
   );
@@ -789,7 +945,9 @@ if (plan === "in-process") {
     SANDBOX_MOOT_ON_NODE,
   );
 } else {
-  const { chosen, overrideNote, skipped } = chooseOam();
+  const { chosen, overrideNote, skipped, passedOver, overrideMissing } = chooseOam();
+  oamFindings.passedOver = passedOver;
+  oamFindings.overrideMissing = overrideMissing;
 
   if (chosen) {
     if (overrideNote) {
@@ -797,19 +955,28 @@ if (plan === "in-process") {
     }
     // The sandbox flags go BEFORE `run` (see sandboxFlags), and `--` separates
     // oam's own flags from the script's argv, so `electron-mcp --version` and
-    // any host-supplied flags survive the hop unchanged.
-    await launchChild(chosen.path, [...sandbox, "run", SERVER_ENTRY, "--", ...process.argv.slice(2)], async (err) => {
-      if (mode === "oam") {
-        await errSync(`electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err})\n`);
-        process.exit(1);
-      }
-      await errSync(
-        `electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err})${fallbackSuffix(hostOam)}.\n`,
-      );
-      await fallBack(hostOam, "the newer oam would not start");
-    });
+    // any host-supplied flags survive the hop unchanged. The sandboxed spawn
+    // drops inherited permission flags from NODE_OPTIONS, so its bare
+    // `--permission` is not widened by grants oam would read back out of it.
+    await launchChild(
+      chosen.path,
+      [...sandbox, "run", SERVER_ENTRY, "--", ...process.argv.slice(2)],
+      async (err) => {
+        if (mode === "oam") {
+          await errSync(`electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err})\n`);
+          process.exit(1);
+        }
+        await errSync(
+          `electron-mcp: failed to launch oam at ${chosen.path} (${err?.message ?? err})${fallbackSuffix(hostOam)}.\n`,
+        );
+        oamFindings.failedToStart = chosen.path;
+        await fallBack(hostOam, "the newer oam would not start");
+      },
+      sandbox.length > 0 ? childEnvWithoutPermissionFlags() : process.env,
+    );
   } else {
     const shim = findOamShim();
+    oamFindings.shim = shim;
     const notes = [
       ...(overrideNote ? [overrideNote] : []),
       ...skipped,
@@ -826,13 +993,18 @@ if (plan === "in-process") {
       // send them straight back.
       const nodeOption =
         sandbox.length > 0
-          ? `or drop ${sandboxAsSet} and use ELECTRON_MCP_RUNTIME=node (Node cannot apply the sandbox)`
-          : "or use ELECTRON_MCP_RUNTIME=node";
+          ? `Or drop ${sandboxAsSet} and use ELECTRON_MCP_RUNTIME=node (Node cannot apply the sandbox).\n`
+          : "Or use ELECTRON_MCP_RUNTIME=node.\n";
+      // One remedy line per cause discovery actually saw (remedyFor): an
+      // outdated oam is told to `oam self-update`, not sent to the website.
       await errSync(
         `electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam (${OAM_MIN.join(".")} or newer) was found` +
           `${sandbox.length > 0 ? `, and ${sandboxAsSet} needs one` : ""}.\n` +
           notes.map((note) => `  ${note}\n`).join("") +
-          `Install or update from https://oamjs.org, set OAM_BIN=/path/to/oam, ${nodeOption}.\n`,
+          remedyFor(oamFindings, process.platform, process.arch)
+            .map(remedyLine)
+            .join("") +
+          nodeOption,
       );
       process.exit(1);
     }
