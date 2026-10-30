@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **The oam floor moves from 0.18.0 to 0.19.1, so the `electron-mcp` launcher no longer runs the server on oam 0.18.x or 0.19.0.** 0.19.1 is verified through the launcher with `OAM_BIN` pointing at it: a full MCP handshake listing all 18 tools, and `electron_scaffold_ipc_channel` answering byte-for-byte as it does on Node, under `ELECTRON_MCP_RUNTIME=oam`, with `ELECTRON_MCP_SANDBOX=1` added (`oam --permission run`, no `WITHOUT --permission` line), and in-process on an oam 0.19.1 host. The `NODE_OPTIONS` handling from 1.7.0 was re-measured on 0.19.1 / Node 22.22.2: a `--permission` host still appends its `--permission` / `--allow-*` flags to a child's `NODE_OPTIONS` (Node still exits 9 on them), `NODE_OPTIONS="--permission --allow-fs-read=*" oam --permission` still reads the filesystem, and since 0.19.1 repeated grants accumulate, so the stripping stays. `ELECTRON_MCP_RUNTIME=node oam --permission --allow-env --allow-child-process --allow-fs-read=* run bin/electron-mcp.mjs -- --version` prints the version and exits 0. **If the launcher finds only an oam older than 0.19.1, it falls back to Node under the default `ELECTRON_MCP_RUNTIME=auto`, and exits with an error under `ELECTRON_MCP_RUNTIME=oam`**, as it did for older releases at the 0.18.0 bump. Run `oam self-update`.
+
+### Fixed
+- `scripts/check-oam-floor.mjs` compares `process.argv[1]` and its own module path by real path, so run from a junctioned or symlinked checkout it now checks instead of exiting 0 having printed nothing (Node realpaths the main module's URL but not argv[1]). Same fix as yaw-mcp 1.1.2. `src/oam-floor.test.ts` runs it through a junction. Release tooling only.
+
 ## [1.7.0] — 2026-10-09
 
 ### Fixed

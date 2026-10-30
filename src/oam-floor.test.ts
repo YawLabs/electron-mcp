@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, describe, it } from "node:test";
@@ -143,5 +143,34 @@ describe("check-oam-floor catches drift", () => {
     const r = runChecker(root);
     assert.notEqual(r.code, 0, r.out);
     assert.match(r.out, /OAM_MIN/);
+  });
+});
+
+describe("check-oam-floor run through a link", () => {
+  // Node realpaths the main module's URL but not process.argv[1], so a raw
+  // compare of the two was false from a junctioned or symlinked checkout: main()
+  // never ran and the script exited 0 having printed nothing -- a silent pass. A
+  // junction needs no privilege on Windows; elsewhere the type is ignored and
+  // this is an ordinary directory symlink.
+  it("still runs the check, and still fails on drift", () => {
+    const linkParent = mkdtempSync(join(tmpdir(), "electron-mcp-floor-link-"));
+    dirs.push(linkParent);
+    const linked = join(linkParent, "scripts");
+    symlinkSync(join(repoRoot, "scripts"), linked, "junction");
+    const root = fixture({ readme: "Needs oam 0.15.2 or newer.\n" });
+    let r: ReturnType<typeof spawnSync>;
+    try {
+      r = spawnSync(process.execPath, [join(linked, "check-oam-floor.mjs"), "--offline", "--root", root], {
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+    } finally {
+      // Remove the link itself before the recursive cleanup ever sees it.
+      unlinkSync(linked);
+    }
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    assert.notEqual(r.status, 0, `the check did not run through the link:\n${out}`);
+    assert.match(out, /oam floor \(OAM_MIN in bin\/electron-mcp\.mjs\): 0\.16\.3/);
+    assert.match(out, /README\.md:1\s+says 0\.15\.2/);
   });
 });

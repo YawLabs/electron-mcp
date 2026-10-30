@@ -91,11 +91,11 @@ describe("launcher runtimePlan()", () => {
     // asking what it was already running on. `auto` and `oam` both have to take
     // the shortcut -- `oam` demands oam, and the host already is one.
     //
-    // 0.18.0 pins the floor as inclusive (it IS the supported release), and
-    // 0.100.0 pins a numeric compare: it sorts BEFORE 0.18.0 as a string, so a
+    // 0.19.1 pins the floor as inclusive (it IS the supported release), and
+    // 0.100.0 pins a numeric compare: it sorts BEFORE 0.19.1 as a string, so a
     // compare over the raw text would treat a newer oam as too old.
     for (const mode of ["auto", "oam"]) {
-      for (const hostOam of ["0.18.0", "0.19.0", "0.100.0", "1.0.0", "0.19.0-dev"]) {
+      for (const hostOam of ["0.19.1", "0.19.2", "0.100.0", "1.0.0", "0.20.0-dev"]) {
         assert.equal(runtimePlan({ mode, hostOam, sandbox: false }), "in-process", `mode=${mode} hostOam=${hostOam}`);
       }
     }
@@ -106,7 +106,7 @@ describe("launcher runtimePlan()", () => {
     // Serving in-process here would silently drop the sandbox the user asked
     // for -- a security downgrade dressed up as an optimisation.
     for (const mode of ["auto", "oam"]) {
-      for (const hostOam of [undefined, "0.18.0", "0.19.0", "1.0.0", "0.17.0", "dev"]) {
+      for (const hostOam of [undefined, "0.19.1", "0.19.2", "1.0.0", "0.19.0", "dev"]) {
         assert.equal(runtimePlan({ mode, hostOam, sandbox: true }), "discover", `mode=${mode} hostOam=${hostOam}`);
       }
     }
@@ -118,7 +118,7 @@ describe("launcher runtimePlan()", () => {
     // `execFile` arguments through a shell, and anything older than the latest
     // release is not what the server is verified on.
     for (const mode of ["auto", "oam"]) {
-      for (const hostOam of ["0.17.0", "0.15.2", "0.9.0", "0.8.2", "0.0.1"]) {
+      for (const hostOam of ["0.19.0", "0.19.0-dev", "0.18.0", "0.17.0", "0.15.2", "0.9.0", "0.8.2", "0.0.1"]) {
         for (const sandbox of [false, true]) {
           assert.equal(
             runtimePlan({ mode, hostOam, sandbox }),
@@ -145,7 +145,7 @@ describe("launcher runtimePlan()", () => {
     // launcher says so on stderr rather than changing the plan.
     for (const sandbox of [false, true]) {
       assert.equal(runtimePlan({ mode: "node", hostOam: undefined, sandbox }), "in-process", `sandbox=${sandbox}`);
-      for (const hostOam of ["0.8.2", "0.18.0", "1.0.0", "dev"]) {
+      for (const hostOam of ["0.8.2", "0.19.1", "1.0.0", "dev"]) {
         assert.equal(
           runtimePlan({ mode: "node", hostOam, sandbox }),
           "handoff-node",
@@ -220,13 +220,13 @@ describe("launcher fallbackInProcess()", () => {
   it("serves a fallback in-process on Node, and on an oam host at the floor", () => {
     // The oam case is the sandbox one: a host at the floor only reaches a
     // fallback because ELECTRON_MCP_SANDBOX=1 sent it to discovery.
-    for (const hostOam of [undefined, "0.18.0", "1.0.0"]) {
+    for (const hostOam of [undefined, "0.19.1", "1.0.0"]) {
       assert.equal(fallbackInProcess(hostOam), true, `hostOam=${hostOam}`);
     }
   });
 
   it("never serves a fallback in-process on an oam host below the floor, or one with no readable version", () => {
-    for (const hostOam of ["0.17.0", "0.15.2", "0.9.0", "0.8.2", "", "dev"]) {
+    for (const hostOam of ["0.19.0", "0.19.0-dev", "0.18.0", "0.17.0", "0.15.2", "0.9.0", "0.8.2", "", "dev"]) {
       assert.equal(fallbackInProcess(hostOam), false, `hostOam=${hostOam}`);
     }
   });
@@ -237,25 +237,25 @@ describe("launcher pickNewest()", () => {
   const at = (path: string, version: number[] | null): Candidate => ({ path, version });
 
   it("pins the floor to the latest oam release", () => {
-    assert.deepEqual(floor, [0, 18, 0]);
+    assert.deepEqual(floor, [0, 19, 1]);
   });
 
   it("takes the newest usable oam, not the first one found", () => {
     // The bug: discovery stopped at the first binary that existed, so an older
     // copy in an earlier location (the installed dir is searched before PATH)
     // hid a newer one later.
-    const chosen = pickNewest([at("installed", [0, 18, 0]), at("path-a", [0, 19, 0]), at("path-b", [0, 18, 9])]);
+    const chosen = pickNewest([at("installed", [0, 19, 1]), at("path-a", [0, 20, 0]), at("path-b", [0, 19, 9])]);
     assert.equal(chosen?.path, "path-a");
   });
 
   it("compares numerically and keeps search order on a tie", () => {
-    assert.equal(pickNewest([at("a", [0, 19, 0]), at("b", [0, 100, 0])])?.path, "b");
-    assert.equal(pickNewest([at("first", [0, 18, 0]), at("second", [0, 18, 0])])?.path, "first");
+    assert.equal(pickNewest([at("a", [0, 20, 0]), at("b", [0, 100, 0])])?.path, "b");
+    assert.equal(pickNewest([at("first", [0, 19, 1]), at("second", [0, 19, 1])])?.path, "first");
   });
 
   it("skips binaries below the floor or with no readable version", () => {
-    assert.equal(pickNewest([at("old", [0, 9, 0]), at("broken", null), at("good", [0, 18, 0])])?.path, "good");
-    assert.equal(pickNewest([at("old", [0, 17, 0]), at("broken", null)]), null);
+    assert.equal(pickNewest([at("old", [0, 9, 0]), at("broken", null), at("good", [0, 19, 1])])?.path, "good");
+    assert.equal(pickNewest([at("old", [0, 19, 0]), at("older", [0, 18, 0]), at("broken", null)]), null);
     assert.equal(pickNewest([]), null);
   });
 });
@@ -296,7 +296,7 @@ describe("launcher remedyFor()", () => {
 
   it("sends an outdated oam to `oam self-update`, not to the website", () => {
     const clauses = remedyFor({ passedOver: [[0, 17, 1]] }, "win32", "arm64");
-    assert.deepEqual(clauses, ["run `oam self-update` to get oam 0.18.0 or newer"]);
+    assert.deepEqual(clauses, ["run `oam self-update` to get oam 0.19.1 or newer"]);
   });
 
   it("asks to check a binary that could not be run, rather than updating it", () => {
@@ -320,7 +320,7 @@ describe("launcher remedyFor()", () => {
 
   it("sends someone with no oam at all to install one", () => {
     assert.deepEqual(remedyFor({}, "win32", "x64"), [
-      "install oam (0.18.0 or newer) from https://oamjs.org, or set OAM_BIN=/path/to/oam",
+      "install oam (0.19.1 or newer) from https://oamjs.org, or set OAM_BIN=/path/to/oam",
     ]);
   });
 
@@ -451,9 +451,10 @@ function recordedSpawnArgs(run: { stderr: string }): string[] | null {
 /**
  * Preload source that poses THIS launcher as an oam host running under
  * `--permission` with grants: `--permission` on execArgv (where oam lists argv
- * flags) and NODE_OPTIONS carrying oam-only grants, as 0.18's inheritance would
- * leave them. Set in the preload, not the child's env, so the Node running the
- * launcher never parses them itself.
+ * flags) and NODE_OPTIONS carrying oam-only grants, as oam's inheritance
+ * leaves them (re-measured on 0.19.1, which still appends them). Set in the
+ * preload, not the child's env, so the Node running the launcher never parses
+ * them itself.
  */
 const POSE_PERMISSION_HOST = [
   'Object.defineProperty(process, "execArgv", { value: [...process.execArgv, "--permission"] });',
@@ -521,7 +522,7 @@ function recordedSpawnStdio(run: { stderr: string }): unknown {
  * The version string a host has to claim for the Node running this suite to
  * pass as that host's own oam: hostOamCandidate probes `process.execPath
  * --version` and accepts it only when it agrees with `process.versions.oam`.
- * Posing "0.18.0" on a Node execPath is therefore NOT a candidate (Node says
+ * Posing "0.19.1" on a Node execPath is therefore NOT a candidate (Node says
  * v22.x), which keeps every other test's "nothing to spawn" premise intact;
  * posing Node's own version IS one.
  */
@@ -706,7 +707,7 @@ describe("launcher on an oam host", () => {
   it("serves in-process instead of spawning a nested oam", { skip }, async () => {
     const envs: Record<string, string>[] = [{}, { ELECTRON_MCP_RUNTIME: "oam" }];
     for (const extraEnv of envs) {
-      const run = await runLauncher("0.18.0", extraEnv);
+      const run = await runLauncher("0.19.1", extraEnv);
       assert.equal(servedInProcess(run), true, `${JSON.stringify(extraEnv)} -> ${JSON.stringify(run)}`);
       assert.match(run.stderr, IN_LAUNCHER_PROCESS);
     }
@@ -715,7 +716,7 @@ describe("launcher on an oam host", () => {
   it("still spawns under ELECTRON_MCP_SANDBOX=1, so --permission is not dropped", { skip }, async () => {
     const envs: Record<string, string>[] = [{}, { ELECTRON_MCP_RUNTIME: "oam" }];
     for (const extraEnv of envs) {
-      const run = await runLauncher("0.18.0", { ELECTRON_MCP_SANDBOX: "1", ...extraEnv });
+      const run = await runLauncher("0.19.1", { ELECTRON_MCP_SANDBOX: "1", ...extraEnv });
       assert.equal(servedInProcess(run), false, `the sandbox must force a spawn, got ${JSON.stringify(run)}`);
       assert.notEqual(run.code, 0);
       // A spawned child failing, not the launcher diagnosing: every launcher
@@ -809,7 +810,7 @@ describe("launcher on an oam host", () => {
       // MCP session completes through the pipes. The child is the Node running
       // this suite, posing as oam; SERVE_AS_OAM records the oam-shaped argv and
       // translates it so Node can serve.
-      const session = await serveLauncher("0.18.0", { ELECTRON_MCP_SANDBOX: "1" }, SERVE_AS_OAM);
+      const session = await serveLauncher("0.19.1", { ELECTRON_MCP_SANDBOX: "1" }, SERVE_AS_OAM);
       assert.deepEqual(session.answered, [1, 2], JSON.stringify(session));
       assert.equal(session.exitedOnItsOwn, false, JSON.stringify(session));
       const args = recordedSpawnArgs(session);
@@ -848,10 +849,10 @@ describe("launcher on an oam host", () => {
 
   it("does not mistake a host whose binary reports a different version for its own oam", { skip }, async () => {
     // The guard that keeps the case above honest: a wrapper on execPath, or a
-    // Node posing as "0.18.0", is not an oam that can spawn a sandboxed child.
+    // Node posing as "0.19.1", is not an oam that can spawn a sandboxed child.
     // With nothing else to spawn, that host falls back in-process and says so.
     const run = await runLauncher(
-      "0.18.0",
+      "0.19.1",
       isolated({ ELECTRON_MCP_SANDBOX: "1", OAM_BIN: MISSING_OAM }),
       RECORD_SPAWN_ARGS,
     );
@@ -869,7 +870,7 @@ describe("launcher on an oam host", () => {
   });
 
   it("still discovers when the host oam is below the floor", { skip }, async () => {
-    const run = await runLauncher("0.17.0");
+    const run = await runLauncher("0.19.0");
     assert.equal(servedInProcess(run), false, `a below-floor host must not shortcut, got ${JSON.stringify(run)}`);
     assert.notEqual(run.code, 0);
     // A spawned child failing, not the launcher diagnosing: every launcher
@@ -894,7 +895,7 @@ describe("launcher with no usable oam", () => {
     assert.equal(run.stdout.trim(), PACKAGE_VERSION, "the Node child must still serve");
     assert.match(
       run.stderr,
-      /this process is oam 0\.9\.0, older than 0\.18\.0, and no newer oam was found; running on .*node/,
+      /this process is oam 0\.9\.0, older than 0\.19\.1, and no newer oam was found; running on .*node/,
     );
     // The OAM_BIN note names no target: Node has not been looked for at that
     // point, and the handoff line above names it once it has been found.
@@ -909,16 +910,16 @@ describe("launcher with no usable oam", () => {
     "under ELECTRON_MCP_SANDBOX=1, a supported oam host with nothing to spawn serves in-process and says so",
     { skip },
     async () => {
-      const run = await runLauncher("0.18.0", isolated({ ELECTRON_MCP_SANDBOX: "1", OAM_BIN: MISSING_OAM }));
+      const run = await runLauncher("0.19.1", isolated({ ELECTRON_MCP_SANDBOX: "1", OAM_BIN: MISSING_OAM }));
       assert.equal(run.code, 0, JSON.stringify(run));
       assert.equal(run.stdout.trim(), PACKAGE_VERSION);
       assert.match(run.stderr, IN_LAUNCHER_PROCESS);
-      assert.match(run.stderr, /^electron-mcp: OAM_BIN=.*does not exist; using this oam 0\.18\.0 process instead\.$/m);
+      assert.match(run.stderr, /^electron-mcp: OAM_BIN=.*does not exist; using this oam 0\.19\.1 process instead\.$/m);
       // The downgrade is never silent; the line explains itself on a host that
       // IS an oam ("fresh"), says how to get the sandbox applied, and names the
       // way to make its absence fatal.
       assert.match(run.stderr, SANDBOX_DROPPED);
-      assert.match(run.stderr, /a fresh oam \(0\.18\.0 or newer\) is needed to apply it and none could be spawned/);
+      assert.match(run.stderr, /a fresh oam \(0\.19\.1 or newer\) is needed to apply it and none could be spawned/);
       assert.match(run.stderr, SANDBOX_REMEDY);
     },
   );
@@ -940,14 +941,14 @@ describe("launcher with no usable oam", () => {
     { skip },
     async () => {
       const run = await runLauncher(
-        "0.18.0",
+        "0.19.1",
         isolated({ ELECTRON_MCP_SANDBOX: "1", ELECTRON_MCP_RUNTIME: "oam", OAM_BIN: MISSING_OAM }),
       );
       assert.equal(run.code, 1, JSON.stringify(run));
       assert.equal(run.stdout.trim(), "", "nothing may be served");
       assert.match(
         run.stderr,
-        /ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.18\.0 or newer\) was found, and ELECTRON_MCP_SANDBOX=\S+ needs one\./,
+        /ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.19\.1 or newer\) was found, and ELECTRON_MCP_SANDBOX=\S+ needs one\./,
       );
       // The advice must not loop back: plain "use ELECTRON_MCP_RUNTIME=node"
       // would drop the sandbox the user just asked for without saying so.
@@ -968,7 +969,7 @@ describe("launcher with no usable oam", () => {
       assert.equal(run.code, 1, JSON.stringify(run));
       assert.match(
         run.stderr,
-        /^electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.18\.0 or newer\) was found\.$/m,
+        /^electron-mcp: ELECTRON_MCP_RUNTIME=oam but no usable oam \(0\.19\.1 or newer\) was found\.$/m,
       );
       assert.match(run.stderr, /^Or use ELECTRON_MCP_RUNTIME=node\.$/m);
       // The remedy names the cause that was seen -- a missing OAM_BIN -- and
@@ -1035,7 +1036,7 @@ describe("launcher with no usable oam", () => {
   it("hands ELECTRON_MCP_RUNTIME=node off to Node even on a supported oam host", { skip }, async () => {
     // The host sits AT the floor, so this exercises the "node was asked for"
     // branch, not the below-floor handoff: no below-floor reason may appear.
-    const run = await runLauncher("0.18.0", isolated({ ELECTRON_MCP_RUNTIME: "node" }));
+    const run = await runLauncher("0.19.1", isolated({ ELECTRON_MCP_RUNTIME: "node" }));
     assert.equal(run.code, 0, JSON.stringify(run));
     assert.equal(run.stdout.trim(), PACKAGE_VERSION);
     assert.match(run.stderr, IN_CHILD);
@@ -1060,7 +1061,7 @@ describe("launcher with no usable oam", () => {
     // that, not that none was found.
     assert.match(
       run.stderr,
-      /this process is oam 0\.9\.0, older than 0\.18\.0, and the newer oam would not start; running on .*node/,
+      /this process is oam 0\.9\.0, older than 0\.19\.1, and the newer oam would not start; running on .*node/,
     );
     assert.doesNotMatch(run.stderr, /no newer oam was found/);
   });
@@ -1069,29 +1070,30 @@ describe("launcher with no usable oam", () => {
     "under ELECTRON_MCP_SANDBOX=1, a supported oam host keeps serving in-process when the chosen oam fails to spawn",
     { skip },
     async () => {
-      // The sandbox sends a 0.18.0 host to discovery -- the only way such a host
+      // The sandbox sends a 0.19.1 host to discovery -- the only way such a host
       // reaches a fallback. When the spawn fails, the documented fallback serves
       // in THIS process, and it has to KEEP serving: with the close handler
       // unguarded it would answer `initialize` and then exit on the dead child's
       // 'close', or, with stdin already piped into that child, stop reading
       // stdin. Both lose the second request, which `--version` cannot see.
       const session = await serveLauncher(
-        "0.18.0",
+        "0.19.1",
         isolated({ ELECTRON_MCP_SANDBOX: "1", OAM_BIN: process.execPath }),
         FAIL_FIRST_SPAWN,
       );
       assert.deepEqual(session.answered, [1, 2], JSON.stringify(session));
       assert.equal(session.exitedOnItsOwn, false, JSON.stringify(session));
-      assert.match(session.stderr, /failed to launch oam at .*; using this oam 0\.18\.0 process instead\./);
+      assert.match(session.stderr, /failed to launch oam at .*; using this oam 0\.19\.1 process instead\./);
       assert.match(session.stderr, SANDBOX_DROPPED);
     },
   );
 });
 
 describe("launcher Node handoff from an oam host under --permission", () => {
-  // oam 0.18 appends a --permission host's flags to a child's NODE_OPTIONS
-  // unless the child's argv holds --permission, and Node exits 9 on oam-only
-  // ones such as --allow-env= (measured on oam 0.18.0 / Node 22.22.2). Node's
+  // oam appends a --permission host's flags to a child's NODE_OPTIONS unless
+  // the child's argv holds --permission, and Node exits 9 on oam-only ones such
+  // as --allow-env= (first measured on oam 0.18.0; re-measured on 0.19.1 / Node
+  // 22.22.2). Node's
   // --permission is stable from 22.13; an older Node cannot serve this way, so
   // the serving half is asserted only where the suite's Node has it.
   const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
@@ -1099,7 +1101,7 @@ describe("launcher Node handoff from an oam host under --permission", () => {
 
   it("puts --permission before the entry on Node's argv and strips the inherited flags", { skip }, async () => {
     const run = await runLauncher(
-      "0.18.0",
+      "0.19.1",
       isolated({ ELECTRON_MCP_RUNTIME: "node" }),
       `${POSE_PERMISSION_HOST}\n${RECORD_SPAWN_ENV}`,
     );
@@ -1110,7 +1112,7 @@ describe("launcher Node handoff from an oam host under --permission", () => {
     assert.equal(recordedSpawnNodeOptions(run), "--max-old-space-size=4096");
     assert.match(
       run.stderr,
-      /^electron-mcp: this oam 0\.18\.0 process runs under --permission, so Node runs the server under --permission too \(no grants\)\.$/m,
+      /^electron-mcp: this oam 0\.19\.1 process runs under --permission, so Node runs the server under --permission too \(no grants\)\.$/m,
     );
     // Served under a permission model, so the "WITHOUT --permission" line
     // would be false here.
@@ -1123,7 +1125,7 @@ describe("launcher Node handoff from an oam host under --permission", () => {
 
   it("adds no --permission when the host is not under it, but still strips NODE_OPTIONS", { skip }, async () => {
     const run = await runLauncher(
-      "0.18.0",
+      "0.19.1",
       isolated({ ELECTRON_MCP_RUNTIME: "node" }),
       `process.env.NODE_OPTIONS = "--allow-net=example.com --max-old-space-size=4096";\n${RECORD_SPAWN_ENV}`,
     );
@@ -1138,7 +1140,7 @@ describe("launcher Node handoff from an oam host under --permission", () => {
 
   it("strips inherited grants from the sandboxed oam spawn, so bare --permission stays bare", { skip }, async () => {
     const run = await runLauncher(
-      "0.18.0",
+      "0.19.1",
       { ELECTRON_MCP_SANDBOX: "1" },
       `${POSE_PERMISSION_HOST}\n${RECORD_SPAWN_ENV}`,
     );

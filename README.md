@@ -91,7 +91,7 @@ Use the same JSON block shown above in any of these.
 
 ## Runtime and sandbox
 
-The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.18.0 or newer) is installed, and falls back to the Node that is already running it. Nothing to configure; both serve the same server.
+The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.19.1 or newer) is installed, and falls back to the Node that is already running it. Nothing to configure; both serve the same server.
 
 **Opt-in sandbox.** With oam, the server can run under `--permission` with no grants at all: no filesystem, no child processes, no network, no environment. This server needs none of them (every tool computes over its arguments and returns markdown), so the sandbox costs no capability and turns anything the server merely happens not to use into a runtime refusal. Add an `env` block to whichever config block you used above (`npx` on macOS / Linux / WSL, `cmd /c npx` on Windows):
 
@@ -99,7 +99,7 @@ The launcher prefers the [oam](https://oamjs.org) runtime when a current one (0.
 "env": { "ELECTRON_MCP_SANDBOX": "1", "ELECTRON_MCP_RUNTIME": "oam" }
 ```
 
-The second variable is what makes the sandbox **required**: it needs a freshly spawned oam (0.18.0 or newer) to apply it, and with `ELECTRON_MCP_RUNTIME=oam` a missing or unusable oam is a startup error instead of an unsandboxed server. Under the default `ELECTRON_MCP_RUNTIME=auto` the launcher still serves in that case, **without** `--permission`, and prints a line on stderr saying so and how to fix it. Use `auto` when you want the sandbox where available; use `oam` when you want to be sure.
+The second variable is what makes the sandbox **required**: it needs a freshly spawned oam (0.19.1 or newer) to apply it, and with `ELECTRON_MCP_RUNTIME=oam` a missing or unusable oam is a startup error instead of an unsandboxed server. Under the default `ELECTRON_MCP_RUNTIME=auto` the launcher still serves in that case, **without** `--permission`, and prints a line on stderr saying so and how to fix it. Use `auto` when you want the sandbox where available; use `oam` when you want to be sure.
 
 How to tell it took: every path that serves without the sandbox after it was asked for prints an `electron-mcp:` line on stderr containing `runs WITHOUT --permission`, plus how to fix it (most MCP clients show server stderr in their logs). When the sandbox is applied there is no such line. To confirm from a shell:
 
@@ -112,7 +112,7 @@ The version on stdout, exit 0, and no `WITHOUT --permission` line means a sandbo
 It is off by default because it is a behaviour change: a future version that legitimately needs a capability should fail in review, not in your session. Two more things to know:
 
 - If the launcher itself is already running under oam (Yaw MCP does this), the sandbox spawns a second oam (the host's own binary, if nothing newer is installed), because only a fresh one can apply a process-level flag. That adds one runtime boot to startup, plus a `--version` probe per oam binary the launcher finds.
-- Request the sandbox through the variable, not by putting `--permission` on the host command: a launcher running under bare `--permission` cannot read its environment, so every `ELECTRON_MCP_*` setting would be ignored. A host that also grants `--allow-env` (with `--allow-child-process`) does let them through; then a handoff to Node (`ELECTRON_MCP_RUNTIME=node`, or a host oam below the floor) runs `node --permission` with no grants, because oam 0.18 otherwise copies the host's `--permission` / `--allow-*` flags into Node's `NODE_OPTIONS` and Node refuses oam-only ones such as `--allow-env=` (exit 9, nothing served); the launcher prints one `electron-mcp:` line saying so. (The direct, no-launcher form is `oam --permission run <path>/dist/index.js`.)
+- Request the sandbox through the variable, not by putting `--permission` on the host command: a launcher running under bare `--permission` cannot read its environment, so every `ELECTRON_MCP_*` setting would be ignored. A host that also grants `--allow-env` (with `--allow-child-process`) does let them through; then a handoff to Node (`ELECTRON_MCP_RUNTIME=node`, or a host oam below the floor) runs `node --permission` with no grants, because oam otherwise copies the host's `--permission` / `--allow-*` flags into Node's `NODE_OPTIONS` and Node refuses oam-only ones such as `--allow-env=` (exit 9, nothing served); the launcher prints one `electron-mcp:` line saying so. (The direct, no-launcher form is `oam --permission run <path>/dist/index.js`.)
 
 | Variable | Effect |
 |---|---|

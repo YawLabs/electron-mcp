@@ -32,7 +32,7 @@
  * offline machine into a failed release would just get switched off.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -236,7 +236,27 @@ async function main() {
   process.exit(failed ? 1 : 0);
 }
 
+/**
+ * True when `argv1` (process.argv[1]) names the module at `moduleUrl`. Node
+ * realpaths the main module's URL (unless --preserve-symlinks-main) but leaves
+ * argv[1] as typed, so from a junctioned or symlinked checkout a plain resolve()
+ * compare was false: main() never ran and the check exited 0 having printed
+ * nothing, a silence that reads as a pass. Both sides are realpath'd, falling
+ * back to resolve() for a path that cannot be.
+ */
+export function isMainModule(argv1, moduleUrl) {
+  if (!argv1) return false;
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return real(argv1) === real(fileURLToPath(moduleUrl));
+}
+
 // Only run when invoked directly, so the helpers above stay importable.
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+if (isMainModule(process.argv[1], import.meta.url)) {
   await main();
 }
