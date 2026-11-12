@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Security
+- **zod moves from 3.25 to 4.6, which fixes GHSA-mrhx-c7xc-m3w5** (zod < 4.6.6 can run out of memory while validating oversized constrained collections). zod is bundled into `dist/index.js` and validates every tool call, so this one reaches users. 3.x has no patched release. The tool schemas move over unchanged: all 327 tests pass, including the real-oam sandbox differential. The only visible change is in `tools/list`: the advertised input schemas no longer carry `additionalProperties: false`. Runtime behavior is the same, because zod 3 and zod 4 both drop unknown keys silently rather than rejecting them.
+- **The bundled fast-uri moves from 3.1.8 to 3.1.9**, which fixes four advisories: scheme spoofing via percent-encoded scheme decoding, improper path equivalence in relative-reference normalization, scheme injection via an unescaped first-segment colon, and host confusion via unchecked WHATWG host canonicalization (Dependabot #47, #51, #52, #53). The only call into fast-uri in the bundle is the SDK's elicitation path, which this server never uses.
+- Dev-graph overrides, none of which ship in the bundle: hono to ^4.13.11 and @hono/node-server to ^2.1.3 (the `serveStatic` double-decode middleware bypass, Dependabot #46 and #55; @hono/node-server has no fixed 1.x, and the SDK accepts `^2.0.5`), qs to ^6.16.1 (the `stringify` comma-format DoS, Dependabot #54), body-parser to ^2.4.0 (GHSA-27r3-jxmh-p828), and ip-address to ^10.7.4 (GHSA-rxp7-6hxx-x8q5). `npm audit` reports 0 vulnerabilities.
+
 ## [1.7.1] — 2026-10-30
 
 ### Changed
