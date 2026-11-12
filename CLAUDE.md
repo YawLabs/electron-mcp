@@ -55,12 +55,13 @@ Run `./release.sh <version>` from the workstation. There is no GitHub Actions wo
 
 ## Dependency overrides
 
-`package.json` has an `overrides` block pinning five **transitive dependencies of `@modelcontextprotocol/sdk`** to versions that patch published CVEs:
+`package.json` has an `overrides` block pinning six **transitive dependencies of `@modelcontextprotocol/sdk`** to versions that patch published CVEs:
 
 - `hono` and `@hono/node-server` — the SDK's HTTP transport uses Hono internally
 - `fast-uri` — used by `ajv` for URI validation in JSON Schema
 - `ip-address` — used by `express-rate-limit` (transitive of the SDK's HTTP transport)
 - `qs` — used by `express` / `body-parser` (the SDK's HTTP transport) for query-string parsing
+- `body-parser` — used by `express` (the SDK's HTTP transport) for request-body parsing
 
 Without these overrides, npm would resolve the SDK's transitive tree to older versions with known advisories that GitHub Dependabot flags on the default branch.
 
@@ -71,4 +72,5 @@ Before dropping or bumping any of these:
 3. Confirm there's no active advisory against the target version.
 4. Re-run the full test suite, including integration.
 
-Which of these reach users: the bundled `dist/index.js` does not ship Hono, `@hono/node-server`, ip-address, qs, express or body-parser -- `src/index.ts` imports only `McpServer` and the stdio transport, and esbuild tree-shakes the HTTP transport away (`grep -ci hono dist/index.js` is 0). It DOES ship fast-uri: `McpServer` constructs the SDK's default `AjvJsonSchemaValidator`, and `ajv` pulls fast-uri in, so the bundle carries `// node_modules/fast-uri/...` and an advisory against fast-uri reaches every `npx @yawlabs/electron-mcp` user until a release rebuilds the bundle (1.6.1 shipped fast-uri 3.1.2, inside the advised range). Practical exposure is low -- the only call into the validator in the bundle is the elicitation path, which `src/` never uses -- but the code is in the artifact. So a fast-uri advisory needs a release; the others are dev-graph hygiene (a clean Dependabot page, and a safe devtime HTTP transport). After a bump, confirm with `grep -c canonicalizeHost dist/index.js` (>= 1; a fast-uri >= 3.1.6 fingerprint) and `grep -ci hono dist/index.js` (0). `release.sh` builds from whatever `node_modules` is on disk and never reinstalls, so run `npm ci` before releasing a dependency fix, or the old fast-uri gets bundled again.
+<!-- ctxlint-ignore-next-line commands -->
+Which of these reach users: the bundled `dist/index.js` does not ship Hono, `@hono/node-server`, ip-address, qs, express or body-parser -- `src/index.ts` imports only `McpServer` and the stdio transport, and esbuild tree-shakes the HTTP transport away (`grep -ci hono dist/index.js` is 0). It DOES ship fast-uri: `McpServer` constructs the SDK's default `AjvJsonSchemaValidator`, and `ajv` pulls fast-uri in, so the bundle carries `// node_modules/fast-uri/...` and an advisory against fast-uri reaches every `npx @yawlabs/electron-mcp` user until a release rebuilds the bundle (1.6.1 shipped fast-uri 3.1.2, inside the advised range). Practical exposure is low -- the only call into the validator in the bundle is the elicitation path, which `src/` never uses -- but the code is in the artifact. So a fast-uri advisory needs a release, and so does one against `zod` (a devDependency, but bundled: it validates every tool call; it moved to v4 for GHSA-mrhx-c7xc-m3w5 because 3.x had no patched release); the others are dev-graph hygiene (a clean Dependabot page, and a safe devtime HTTP transport). After a bump, confirm with `grep -c canonicalizeHost dist/index.js` (>= 1; a fast-uri >= 3.1.6 fingerprint) and `grep -ci hono dist/index.js` (0). `release.sh` builds from whatever `node_modules` is on disk and never reinstalls, so run `npm ci` before releasing a dependency fix, or the old fast-uri gets bundled again.
