@@ -97,7 +97,7 @@
  * `process.env` reads (the env leg has to be static, since a denied env read
  * does not throw), and src/sandbox.test.ts, wherever a real oam at the floor is
  * installed, calls every tool under bare `--permission` and diffs the results
- * against a plain Node run. Verified by hand as well against oam 0.19.1,
+ * against a plain Node run. Verified by hand as well against oam 0.19.5,
  * through this launcher's own spawn (`--permission run` on the child argv):
  * `--version`, `initialize`, `tools/list` and every tool answer exactly as
  * they do on Node, while a one-line `readFileSync` under the same flag is
@@ -126,7 +126,7 @@
  * inheritance: a child started under `--permission` gets the host's
  * `--permission` / `--allow-*` flags appended to its NODE_OPTIONS unless its
  * own argv holds `--permission`, and Node refuses oam-only flags such as
- * `--allow-env=` there (first measured on oam 0.18.0; re-measured on 0.19.1 /
+ * `--allow-env=` there (first measured on oam 0.18.0; re-measured on 0.19.5 /
  * Node 22.22.2: exit 9, nothing served). So a Node handoff from such a host carries `--permission`
  * on Node's own argv (Node's permission model, no grants, which this server
  * needs none of -- measured: `node --permission dist/index.js` answers
@@ -147,7 +147,7 @@
  * sandboxed oam served it.
  *
  * MINIMUM OAM VERSION
- * The latest oam release, 0.19.1 -- bump OAM_MIN when oam ships a newer one.
+ * The latest oam release, 0.19.5 -- bump OAM_MIN when oam ships a newer one.
  * Only the current oam is used and verified; an older one is handed off or
  * falls back to Node. Below 0.9.0 `child_process.execFile` ran its arguments
  * through a SHELL, `exec` accepted `timeout` and ignored it, `spawnSync`
@@ -188,7 +188,7 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Oldest oam this launcher will run on. See MINIMUM OAM VERSION above. */
-const OAM_MIN = [0, 19, 1];
+const OAM_MIN = [0, 19, 5];
 
 /**
  * Bound on each `oam --version` probe. A healthy oam answers in milliseconds;
@@ -416,7 +416,7 @@ function sandboxFlags(setting) {
  * and the value can also arrive already carrying them from a grandparent. Node
  * exits 9 on oam-only spellings there (`--allow-env=`, `--allow-net=`), and a
  * sandboxed oam child would read inherited grants back out of it -- re-measured
- * on oam 0.19.1: `NODE_OPTIONS="--permission --allow-fs-read=*" oam --permission`
+ * on oam 0.19.5: `NODE_OPTIONS="--permission --allow-fs-read=*" oam --permission`
  * reads the filesystem, and since 0.19.1 repeated grants accumulate, so an
  * inherited `--allow-fs-read=` widens an argv grant instead of being replaced
  * by it. Space-separated tokens, as oam and Node write them.
@@ -434,7 +434,7 @@ function stripPermissionFlags(nodeOptions) {
 /**
  * Whether THIS process is an oam running under its permission model: the flag
  * on its own argv (process.execArgv), or inherited through NODE_OPTIONS, which
- * oam reads but does not list in execArgv (re-measured on 0.19.1). oam has no
+ * oam reads but does not list in execArgv (re-measured on 0.19.5). oam has no
  * `process.permission`. On Node it is always false -- a Node host's own
  * `--permission` is Node's business, and Node does not append to NODE_OPTIONS
  * an oam flag Node would then refuse.
@@ -543,7 +543,7 @@ function unusableReason(path, version, label = path) {
  *   shim           an oam.cmd/.bat was found (its own note names the remedy)
  * Only when nothing was found at all is installing from oamjs.org the advice
  * -- and not even then on a Linux that is not x64: oam publishes darwin
- * arm64/x64, windows arm64/x64 and linux x64 (checked against the v0.19.1
+ * arm64/x64, windows arm64/x64 and linux x64 (checked against the v0.19.5
  * release assets), so on an arm64 Linux box "install" is an impossible remedy.
  *
  * Pure on purpose, like runtimePlan: platform and arch are parameters.
@@ -889,7 +889,7 @@ async function noteSandboxNotApplied(why) {
  */
 async function fallBack(hostOam, why) {
   // "fresh" is the word that makes this line make sense on a host that IS an
-  // oam at the floor: it just said "using this oam 0.19.1 process", and only a
+  // oam at the floor: it just said "using this oam 0.19.5 process", and only a
   // freshly spawned oam can apply a process-level flag.
   const sandboxWhy = `a fresh oam (${OAM_MIN.join(".")} or newer) is needed to apply it and none could be spawned`;
   if (fallbackInProcess(hostOam)) {
