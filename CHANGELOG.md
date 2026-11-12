@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.7.2] — 2026-11-11
+
 ### Changed
 - **The oam floor moves from 0.19.1 to 0.19.5, so the `electron-mcp` launcher no longer runs the server on oam 0.19.1 through 0.19.4.** 0.19.5 is verified through the launcher with `OAM_BIN` pointing at it: a full MCP handshake listing all 18 tools, with `electron_scaffold_ipc_channel` returning identical output under `ELECTRON_MCP_RUNTIME=oam`, with `ELECTRON_MCP_SANDBOX=1` added, in-process on an oam 0.19.5 host, and on Node. Two `NODE_OPTIONS` behaviors were re-measured on 0.19.5 / Node 22.22.2:
   - A `--permission` host still appends its `--allow-*` flags to a child's `NODE_OPTIONS`, and Node still exits 9 on them.
