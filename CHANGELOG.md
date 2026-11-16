@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **The oam floor moves from 0.19.5 to 0.20.2, so the `electron-mcp` launcher no longer runs the server on oam 0.19.5 through 0.20.1.** 0.20.2 is verified through the launcher with `OAM_BIN` pointing at it: a full MCP handshake (protocol 2025-06-18) listing all 18 tools, with `tools/list` and `electron_scaffold_ipc_channel` returning identical output under `ELECTRON_MCP_RUNTIME=oam`, with `ELECTRON_MCP_SANDBOX=1` added (`oam --permission run`, no `WITHOUT --permission` line), in-process on an oam 0.20.2 host, from that host with the sandbox or a Node handoff, and on Node. The `NODE_OPTIONS` behaviors were re-measured on 0.20.2 / Node 22.22.2, and all still hold, so the stripping stays:
+  - A `--permission` host still appends its `--permission` / `--allow-*` flags to a child's `NODE_OPTIONS`, and Node still exits 9 on them.
+  - `NODE_OPTIONS="--permission --allow-fs-read=*" oam --permission` still reads the filesystem, and an inherited `--allow-fs-read=` still adds to an argv grant.
+  - A `--permission` that arrives through `NODE_OPTIONS` is still applied without being listed in `process.execArgv`.
+
+  `ELECTRON_MCP_RUNTIME=node oam --permission --allow-env --allow-child-process --allow-fs-read=* run bin/electron-mcp.mjs -- --version` prints the version and exits 0. **If the launcher finds only an oam older than 0.20.2, it falls back to Node under the default `ELECTRON_MCP_RUNTIME=auto`, and exits with an error under `ELECTRON_MCP_RUNTIME=oam`.** Run `oam self-update`.
+- The bundled MCP SDK moves from 1.32.1 to 1.32.2, the range Yaw MCP 1.1.13 pins (`^1.32.2`). `npm audit` reports 0 vulnerabilities.
+
 ## [1.7.2] — 2026-11-11
 
 ### Changed
